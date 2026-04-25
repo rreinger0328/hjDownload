@@ -21,14 +21,14 @@ RUN apt-get update && apt-get install -y \
 # 之后所有的 COPY 和 CMD 指令都会在这个目录下执行。
 WORKDIR /app
 
-# 5. 利用本地提供的 .deb 文件安装 Google Chrome（用于 Selenium 网页解析）：
-# COPY: 将项目目录下的 Chrome 安装包复制到容器的 /tmp 临时目录。
-COPY google-chrome-stable_current_amd64.deb /tmp/chrome.deb
+# 5. 远程下载完整的 Google Chrome 安装包：
+# 使用 curl 从官方源下载最新稳定版的 Chrome 安装包到 /tmp 目录
+RUN curl -sSL -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 
 # 6. 执行 Chrome 安装逻辑：
-# apt-get install -y /tmp/chrome.deb: 尝试安装本地 deb 包。
-# || apt-get install -fy: 如果因为缺少系统依赖报错，自动从官方源下载并修复缺失的底层库（如 libnss3 等）。
-# rm /tmp/chrome.deb: 安装完后立即删除安装包，节省空间。
+# apt-get install -y /tmp/chrome.deb: 尝试安装刚下载的 deb 包。
+# || apt-get install -fy: 如果由于缺少底层依赖库报错，则自动从系统源拉取依赖补齐。
+# 最后清除冗余文件减小体积
 RUN apt-get update && \
     apt-get install -y /tmp/chrome.deb || apt-get install -fy && \
     rm /tmp/chrome.deb && rm -rf /var/lib/apt/lists/*

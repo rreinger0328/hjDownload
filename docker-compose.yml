@@ -1,0 +1,20 @@
+services:
+  app:
+    image: ghcr.io/rreinger0328/hjdownload:main
+    container_name: hjw_downloader
+    ports:
+      - "5000:5000"
+    volumes:
+      # 映射到你指定的 NAS 视频存储路径
+      - /vol1/1000/video/AVI:/downloads
+      - ./data:/app/data
+    environment:
+      - REDIS_HOST=redis_db
+    depends_on:
+      - redis_db
+    restart: always
+
+  redis_db:
+    image: redis:7-alpine
+    container_name: hjw_redis
+    restart: always

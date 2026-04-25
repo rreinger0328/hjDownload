@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>实时监控</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f0f2f5; }
+        .card { max-width: 1000px; margin: auto; background: white; padding: 20px; border-radius: 8px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; border-bottom: 1px solid #ddd; text-align: left; }
+        th { background: #007bff; color: white; }
+        .done { color: green; font-weight: bold; }
+        .active { color: #007bff; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>📊 实时下载监控 (无需刷新)</h2>
+        <table>
+            <thead><tr><th>作者</th><th>标题</th><th>状态</th><th>实时进度</th></tr></thead>
+            <tbody id="task-body">
+                {% for task in tasks %}
+                <tr id="row-{{ task.task_id }}">
+                    <td>{{ task.author }}</td>
+                    <td>{{ task.title }}</td>
+                    <td id="status-{{ task.task_id }}" class="{{ 'done' if task.done else 'active' }}">{{ task.status }}</td>
+                    <td id="progress-{{ task.task_id }}" style="font-family: monospace;">{{ task.progress }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <br><a href="/">返回首页</a>
+    </div>
+    <script>
+        const socket = io();
+        socket.on('task_update', (data) => {
+            const statusEl = document.getElementById('status-' + data.task_id);
+            const progressEl = document.getElementById('progress-' + data.task_id);
+            if (statusEl && data.status) {
+                statusEl.innerText = data.status;
+                if (data.done) statusEl.className = 'done';
+            }
+            if (progressEl && data.progress) progressEl.innerText = data.progress;
+        });
+    </script>
+</body>
+</html>

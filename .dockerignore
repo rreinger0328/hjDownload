@@ -1,0 +1,16 @@
+# 排除下载文件夹
+Downloads_Video/
+
+# 排除 Docker Compose 文件
+docker-compose.yaml
+docker-compose.yml
+
+
+# 排除 Python 缓存和日志
+__pycache__/
+*.pyc
+*.log
+
+# 排除隐藏文件
+.git/
+.vscode/

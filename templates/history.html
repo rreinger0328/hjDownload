@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><title>历史记录</title></head>
+<body style="font-family: sans-serif; padding: 20px;">
+    <h2>📜 SQLite 永久下载历史</h2>
+    <table border="1" style="width: 100%; border-collapse: collapse;">
+        <tr style="background: #6c757d; color: white;"><th>添加时间</th><th>作者</th><th>标题</th><th>最终状态</th><th>时长</th></tr>
+        {% for task in tasks %}
+        <tr>
+            <td>{{ task.time_added }}</td><td>{{ task.author }}</td><td>{{ task.title }}</td><td>{{ task.status }}</td><td>{{ task.progress }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    <br><a href="/">返回首页</a>
+</body>
+</html>

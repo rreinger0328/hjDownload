@@ -18,8 +18,11 @@ MAX_THREADS = 3
 MIN_DURATION = 300 # 5分钟
 HISTORY_TOKEN = "manager_999"
 
-# Redis 连接 (通过 Compose 里的服务名连接)
-r = redis.Redis(host=os.environ.get('REDIS_HOST', 'localhost'), port=6379, decode_responses=True)
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Redis 连接 (通过 Compose 里的服务名连接)，增加超时时间防止应用卡死
+r = redis.Redis(host=os.environ.get('REDIS_HOST', 'redis_db'), port=6379, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -141,6 +144,7 @@ session_db = {}
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
+        app.logger.info("Received POST request to begin batch download")
         content = request.form.get('video_txt', '')
         stoken = str(uuid.uuid4())[:12]
         session_db[stoken] = []
@@ -148,17 +152,27 @@ def index():
         titles = re.findall(r"标题:\s*(.*?)\s*(?:\||$|\n)", content)
         urls = re.findall(r"链接:\s*(https?://[^\s\n|]+)", content)
         authors = re.findall(r"作者:\s*(.*?)\s*(?:\n|$)", content)
+        app.logger.info(f"Parsed {len(titles)} tasks from POST input")
         
-        with sqlite3.connect(DB_PATH, timeout=20) as conn:
-            for i in range(len(titles)):
-                t, u, a = titles[i], urls[i], (authors[i] if i<len(authors) else "Unknown")
-                tid = str(uuid.uuid4())[:12]
-                conn.execute("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", 
-                             (tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
-                session_db[stoken].append(tid)
-                # 同步到 Redis
-                r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
-                threading.Thread(target=download_worker, args=(tid, t, u, a), daemon=True).start()
+        try:
+            with sqlite3.connect(DB_PATH, timeout=20) as conn:
+                app.logger.info("Successfully connected to SQLite DB")
+                for i in range(len(titles)):
+                    t, u, a = titles[i], urls[i], (authors[i] if i<len(authors) else "Unknown")
+                    tid = str(uuid.uuid4())[:12]
+                    conn.execute("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                                 (tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
+                    session_db[stoken].append(tid)
+                    # 同步到 Redis
+                    app.logger.info(f"Connecting to Redis to save task {tid}...")
+                    r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
+                    app.logger.info(f"Task {tid} successfully written to Redis and starting background worker.")
+                    threading.Thread(target=download_worker, args=(tid, t, u, a), daemon=True).start()
+            app.logger.info("All tasks processed, preparing to redirect.")
+        except Exception as e:
+            app.logger.error(f"Error processing POST request: {e}", exc_info=True)
+            return f"发生了内部错误: {e}", 500
+            
         return redirect(url_for('status_page', token=stoken))
     return render_template('index.html', history_token=HISTORY_TOKEN)
 

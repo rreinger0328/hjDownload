@@ -15,9 +15,10 @@ if os.path.exists(env_path):
                 key, val = line.strip().split('=', 1)
                 os.environ[key.strip()] = val.strip()
 
-# 从环境变量读取配置 (带默认值，若环境变量不存在则使用原密码，保障平滑过渡)
-TOKEN = os.environ.get("TG_TOKEN", "8564745252:AAHZvOvsV6CRc3iQShdW-2LA7-SeM-9wZEw")
-CHAT_ID = os.environ.get("TG_CHAT_ID", "7598499045")
+# 从环境变量读取配置 (只读取环境变量，不设默认值以确保隐秘性)
+TOKEN = os.environ.get("TG_TOKEN")
+CHAT_ID = os.environ.get("TG_CHAT_ID")
+
 
 BASE_URL = "https://www.hjw01.com"
 CHECK_INTERVAL = 21600  # 将检查时间修改为 6 小时 (6 * 3600 秒)

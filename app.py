@@ -5,7 +5,7 @@ import eventlet
 eventlet.monkey_patch()
 
 import os, re, time, threading, subprocess, uuid, sqlite3, redis
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, Response
 from flask_socketio import SocketIO
 
 app = Flask(__name__)
@@ -34,6 +34,14 @@ def init_db():
         conn.execute('''CREATE TABLE IF NOT EXISTS tasks 
                      (task_id TEXT PRIMARY KEY, title TEXT, author TEXT, 
                       status TEXT, progress TEXT, done INTEGER, time_added TEXT)''')
+                      
+    REPTILE_DB = os.path.join(os.path.dirname(DB_PATH), "reptile.db")
+    with sqlite3.connect(REPTILE_DB, timeout=20) as conn:
+        conn.execute('PRAGMA journal_mode=WAL;')
+        conn.execute('''CREATE TABLE IF NOT EXISTS new_data 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, url TEXT, author TEXT, time_added TEXT)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS old_data 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, url TEXT, author TEXT, time_added TEXT)''')
 
 def update_and_broadcast(task_id, status=None, progress=None, done=None):
     """
@@ -223,6 +231,113 @@ def history_page(token):
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT * FROM tasks ORDER BY time_added DESC LIMIT 500").fetchall()
     return render_template('history.html', tasks=rows)
+
+@app.route('/reptile/new')
+def reptile_new():
+    REPTILE_DB = os.path.join(os.path.dirname(DB_PATH), "reptile.db")
+    with sqlite3.connect(REPTILE_DB, timeout=20) as r_conn:
+        r_conn.row_factory = sqlite3.Row
+        rows = r_conn.execute("SELECT * FROM new_data ORDER BY id DESC").fetchall()
+    return render_template('reptile_new.html', tasks=rows)
+
+@app.route('/reptile/old')
+def reptile_old():
+    page = request.args.get('page', 1, type=int)
+    search = request.args.get('search', '', type=str)
+    per_page = 50
+    offset = (page - 1) * per_page
+    
+    REPTILE_DB = os.path.join(os.path.dirname(DB_PATH), "reptile.db")
+    with sqlite3.connect(REPTILE_DB, timeout=20) as r_conn:
+        r_conn.row_factory = sqlite3.Row
+        
+        query = "SELECT * FROM old_data"
+        params = []
+        if search:
+            query += " WHERE title LIKE ? OR author LIKE ?"
+            like_val = f"%{search}%"
+            params.extend([like_val, like_val])
+            
+        query += " ORDER BY id DESC LIMIT ? OFFSET ?"
+        params.extend([per_page, offset])
+        
+        rows = r_conn.execute(query, params).fetchall()
+        
+        count_q = "SELECT COUNT(*) FROM old_data"
+        c_params = []
+        if search:
+            count_q += " WHERE title LIKE ? OR author LIKE ?"
+            c_params.extend([like_val, like_val])
+        total = r_conn.execute(count_q, c_params).fetchone()[0]
+        
+    total_pages = (total + per_page - 1) // per_page
+    return render_template('reptile_old.html', tasks=rows, page=page, total_pages=total_pages, search=search)
+
+@app.route('/api/reptile/export', methods=['GET'])
+def export_new_data():
+    REPTILE_DB = os.path.join(os.path.dirname(DB_PATH), "reptile.db")
+    with sqlite3.connect(REPTILE_DB, timeout=20) as r_conn:
+        r_conn.row_factory = sqlite3.Row
+        rows = r_conn.execute("SELECT * FROM new_data ORDER BY id ASC").fetchall()
+        if not rows:
+            return "没有新数据", 400
+            
+        r_conn.execute("INSERT INTO old_data (title, url, author, time_added) SELECT title, url, author, time_added FROM new_data")
+        r_conn.execute("DELETE FROM new_data")
+        r_conn.commit()
+        
+    # Format txt
+    lines = []
+    for row in rows:
+        lines.append(f"标题: {row['title']}")
+        lines.append(f"链接: {row['url']}")
+        lines.append(f"作者: {row['author']}")
+        lines.append("-" * 30)
+    
+    content = "\\n".join(lines) + "\\n"
+    return Response(
+        content,
+        mimetype="text/plain",
+        headers={"Content-disposition": "attachment; filename=reptile_new_data.txt"}
+    )
+
+@app.route('/api/reptile/oneclick', methods=['POST'])
+def oneclick_download():
+    REPTILE_DB = os.path.join(os.path.dirname(DB_PATH), "reptile.db")
+    with sqlite3.connect(REPTILE_DB, timeout=20) as r_conn:
+        r_conn.row_factory = sqlite3.Row
+        rows = r_conn.execute("SELECT * FROM new_data").fetchall()
+        if not rows:
+            return "没有新数据", 400
+            
+        # Move to old_data
+        r_conn.execute("INSERT INTO old_data (title, url, author, time_added) SELECT title, url, author, time_added FROM new_data")
+        r_conn.execute("DELETE FROM new_data")
+        r_conn.commit()
+
+    stoken = str(uuid.uuid4())[:12]
+    session_db[stoken] = []
+    
+    try:
+        with sqlite3.connect(DB_PATH, timeout=20) as conn:
+            db_values = []
+            for row in rows:
+                t, u, a = row['title'], row['url'], row['author']
+                tid = str(uuid.uuid4())[:12]
+                db_values.append((tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
+                session_db[stoken].append(tid)
+                
+                # 同步到 Redis
+                r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
+                threading.Thread(target=download_worker, args=(tid, t, u, a), daemon=True).start()
+                
+            if db_values:
+                conn.executemany("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", db_values)
+    except Exception as e:
+        app.logger.error(f"Error processing oneclick: {e}", exc_info=True)
+        return f"发生了内部错误: {e}", 500
+        
+    return redirect(url_for('status_page', token=stoken))
 
 if __name__ == '__main__':
     init_db()

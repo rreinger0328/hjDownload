@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head><title>最新爬取 - HJW</title></head>
+<body style="font-family: sans-serif; background: #f4f7f6; margin: 0; padding: 0;">
+    <nav style="background: #333; padding: 15px 30px; display: flex; gap: 20px;">
+        <a href="/" style="color: #fff; text-decoration: none; font-weight: bold;">🔄 主页</a>
+        <a href="/reptile/new" style="color: #fff; text-decoration: none; font-weight: bold;">✨ 最新爬取</a>
+        <a href="/reptile/old" style="color: #fff; text-decoration: none; font-weight: bold;">📚 全部爬记录</a>
+        <a href="/history/manager_999" style="color: #fff; text-decoration: none; font-weight: bold;">⬇️ 下载历史</a>
+    </nav>
+    <div style="padding: 40px; max-width: 1000px; margin: 0 auto;">
+        <h2>🕷️ 最新爬取结果 ({{ tasks|length }} 条)</h2>
+        <div style="margin-bottom: 20px; display: flex; gap: 15px;">
+            <a href="/api/reptile/export" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">📥 导出 TXT 文件 (移至历史)</a>
+            <form action="/api/reptile/oneclick" method="post" style="margin: 0;">
+                <button type="submit" style="background: #28a745; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold;">🚀 一键提取下载 (移至历史)</button>
+            </form>
+        </div>
+        <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+            {% if tasks %}
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr style="border-bottom: 2px solid #eee; text-align: left;">
+                        <th style="padding: 10px;">ID</th>
+                        <th style="padding: 10px;">标题</th>
+                        <th style="padding: 10px;">作者</th>
+                        <th style="padding: 10px;">时间</th>
+                        <th style="padding: 10px;">链接</th>
+                    </tr>
+                    {% for task in tasks %}
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 10px;">{{ task.id }}</td>
+                        <td style="padding: 10px;">{{ task.title }}</td>
+                        <td style="padding: 10px;">{{ task.author }}</td>
+                        <td style="padding: 10px;">{{ task.time_added }}</td>
+                        <td style="padding: 10px;"><a href="{{ task.url }}" target="_blank">直达链接</a></td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            {% else %}
+                <p>暂无新数据。</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

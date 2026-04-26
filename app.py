@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import eventlet
 eventlet.monkey_patch()
 
@@ -56,12 +59,25 @@ def update_and_broadcast(task_id, status=None, progress=None, done=None):
     socketio.emit('task_update', payload)
 
     # 3. 同步到持久化数据库 (仅在关键状态或完成时)
-    if done or status in ["解析中...", "下载中", "已完成", "错误"]:
+    if status in ["解析中...", "已完成", "错误"]:
         try:
             with sqlite3.connect(DB_PATH, timeout=20) as conn:
-                if status: conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (status, task_id))
-                if progress: conn.execute("UPDATE tasks SET progress = ? WHERE task_id = ?", (progress, task_id))
-                if done is not None: conn.execute("UPDATE tasks SET done = ? WHERE task_id = ?", (1 if done else 0, task_id))
+                query = "UPDATE tasks SET "
+                params = []
+                if status:
+                    query += "status = ?, "
+                    params.append(status)
+                if progress:
+                    query += "progress = ?, "
+                    params.append(progress)
+                if done is not None:
+                    query += "done = ?, "
+                    params.append(1 if done else 0)
+                
+                if params:
+                    query = query.rstrip(', ') + " WHERE task_id = ?"
+                    params.append(task_id)
+                    conn.execute(query, tuple(params))
         except:
             pass # 即使锁定也无妨，Redis 里已经有最新数据了
 
@@ -105,16 +121,21 @@ def get_video_src(page_url):
 
 semaphore = threading.Semaphore(MAX_THREADS)
 def download_worker(task_id, title, url, author):
+    logging.info(f"[Worker] Started task {task_id} for '{title}'")
     with semaphore:
         author_folder = re.sub(r'[\\/:*?"<>|]', '_', author).strip() or "未分类"
         target_dir = os.path.join(BASE_SAVE_DIR, author_folder)
         os.makedirs(target_dir, exist_ok=True)
+        logging.info(f"[Worker] Task {task_id} target directory: {target_dir}")
 
         update_and_broadcast(task_id, status="解析中...")
+        logging.info(f"[Worker] Task {task_id} fetching m3u8 src via Selenium...")
         m3u8 = get_video_src(url)
         if not m3u8:
+            logging.error(f"[Worker] Task {task_id} failed to get m3u8.")
             update_and_broadcast(task_id, status="解析失败", done=True)
             return
+        logging.info(f"[Worker] Task {task_id} extracted m3u8: {m3u8[:50]}...")
 
         update_and_broadcast(task_id, status="下载中")
         safe_title = re.sub(r'[\\/:*?<>|]', '_', title)[:80]
@@ -134,11 +155,15 @@ def download_worker(task_id, title, url, author):
                         last_broadcast_time = time.time()
         
         proc.wait()
+        logging.info(f"[Worker] Task {task_id} FFmpeg exited with code {proc.returncode}")
         if proc.returncode == 0 and os.path.exists(out_path) and is_too_short(out_path):
+            logging.warning(f"[Worker] Task {task_id} video is too short, skipping.")
             os.remove(out_path)
             update_and_broadcast(task_id, status="已跳过(不足5min)", done=True)
         else:
-            update_and_broadcast(task_id, status="已完成" if proc.returncode == 0 else "错误", done=True)
+            final_status = "已完成" if proc.returncode == 0 else "错误"
+            logging.info(f"[Worker] Task {task_id} finished with status: {final_status}")
+            update_and_broadcast(task_id, status=final_status, done=True)
 
 session_db = {}
 @app.route('/', methods=['GET', 'POST'])
@@ -157,17 +182,21 @@ def index():
         try:
             with sqlite3.connect(DB_PATH, timeout=20) as conn:
                 app.logger.info("Successfully connected to SQLite DB")
+                db_values = []
                 for i in range(len(titles)):
                     t, u, a = titles[i], urls[i], (authors[i] if i<len(authors) else "Unknown")
                     tid = str(uuid.uuid4())[:12]
-                    conn.execute("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", 
-                                 (tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
+                    db_values.append((tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
                     session_db[stoken].append(tid)
                     # 同步到 Redis
                     app.logger.info(f"Connecting to Redis to save task {tid}...")
                     r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
                     app.logger.info(f"Task {tid} successfully written to Redis and starting background worker.")
                     threading.Thread(target=download_worker, args=(tid, t, u, a), daemon=True).start()
+                
+                if db_values:
+                    app.logger.info(f"Batch inserting {len(db_values)} tasks into SQLite...")
+                    conn.executemany("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", db_values)
             app.logger.info("All tasks processed, preparing to redirect.")
         except Exception as e:
             app.logger.error(f"Error processing POST request: {e}", exc_info=True)

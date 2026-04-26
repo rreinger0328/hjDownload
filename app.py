@@ -341,4 +341,8 @@ def oneclick_download():
 
 if __name__ == '__main__':
     init_db()
+    # 启动爬虫后台线程（随主进程一起运行，daemon=True 保证主进程退出时自动结束）
+    import reptile
+    threading.Thread(target=reptile.main, daemon=True).start()
+    logging.info("[Reptile] 爬虫后台线程已启动")
     socketio.run(app, host='0.0.0.0', port=5000)

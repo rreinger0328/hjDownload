@@ -45,7 +45,8 @@ COPY . .
 # selenium, webdriver-manager: 用于模拟浏览器操作，动态抓取视频的 m3u8 地址。
 # redis: 引入 Redis 驱动，用于在高并发下载时作为进度缓存，解决 SQLite 锁死问题。
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    flask flask-socketio eventlet selenium webdriver-manager redis
+    flask flask-socketio eventlet selenium webdriver-manager redis \
+    requests beautifulsoup4
 
 # 9. 声明容器运行时监听的端口号。
 # 对应 docker-compose.yml 里的 5000:5000。

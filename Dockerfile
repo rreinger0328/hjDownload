@@ -6,7 +6,8 @@ FROM python:3.9-slim
 # DEBIAN_FRONTEND=noninteractive: 在安装软件时自动确认所有提示，防止构建卡死在地理位置或时区确认上。
 # PYTHONUNBUFFERED=1: 强制 Python 不使用缓存直接输出日志，这样你能在飞牛 NAS 的 UI 面板上实时看到下载进度。
 ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TZ=Asia/Shanghai
 
 # 3. 安装 Linux 系统级的基础依赖工具：
 # ffmpeg: 核心工具，用于下载 m3u8 并合并视频流。
@@ -14,7 +15,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # --no-install-recommends: 不安装建议的非必要插件，保持系统纯净。
 # rm -rf /var/lib/apt/lists/*: 安装完立即删除本地软件包索引，显著减小镜像体积。
 RUN apt-get update && apt-get install -y \
-    ffmpeg curl gnupg ca-certificates --no-install-recommends && \
+    ffmpeg curl gnupg ca-certificates tzdata --no-install-recommends && \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
     rm -rf /var/lib/apt/lists/*
 
 # 4. 设置容器内的默认工作目录为 /app。

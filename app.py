@@ -66,8 +66,8 @@ def update_and_broadcast(task_id, status=None, progress=None, done=None):
     # 2. 实时广播
     socketio.emit('task_update', payload)
 
-    # 3. 同步到持久化数据库 (仅在关键状态或完成时)
-    if status in ["解析中...", "已完成", "错误"]:
+    # 3. 同步到持久化数据库 (任务完成或关键状态时写库)
+    if done or status in ["解析中...", "已完成", "错误", "解析失败", "已跳过(不足5min)"]:
         try:
             with sqlite3.connect(DB_PATH, timeout=20) as conn:
                 query = "UPDATE tasks SET "

@@ -306,6 +306,83 @@ def export_new_data():
         }
     )
 
+@app.route('/api/reptile/export_selected', methods=['GET'])
+def export_selected():
+    ids_str = request.args.get('ids', '')
+    source = request.args.get('source', 'new')
+    if not ids_str:
+        return "未选择任何数据", 400
+    
+    id_list = [i.strip() for i in ids_str.split(',') if i.strip()]
+    table = 'new_data' if source == 'new' else 'old_data'
+    
+    REPTILE_DB = os.path.join(os.path.dirname(DB_PATH), "reptile.db")
+    with sqlite3.connect(REPTILE_DB, timeout=20) as r_conn:
+        r_conn.row_factory = sqlite3.Row
+        placeholders = ','.join(['?'] * len(id_list))
+        rows = r_conn.execute(f"SELECT * FROM {table} WHERE id IN ({placeholders})", id_list).fetchall()
+        if not rows:
+            return "未找到选中的数据", 400
+    
+    lines = []
+    for row in rows:
+        lines.append(f"标题: {row['title']}")
+        lines.append(f"链接: {row['url']}")
+        lines.append(f"作者: {row['author']}")
+        lines.append("-" * 30)
+    
+    content = "\n".join(lines) + "\n"
+    
+    return Response(
+        content,
+        mimetype="text/plain",
+        headers={
+            "Content-disposition": f"attachment; filename=selected_{source}_data.txt",
+            "Content-Type": "text/plain; charset=utf-8"
+        }
+    )
+
+@app.route('/api/reptile/download_selected', methods=['POST'])
+def download_selected():
+    ids_str = request.form.get('ids', '')
+    source = request.form.get('source', 'new')
+    if not ids_str:
+        return "未选择任何数据", 400
+    
+    id_list = [i.strip() for i in ids_str.split(',') if i.strip()]
+    table = 'new_data' if source == 'new' else 'old_data'
+    
+    REPTILE_DB = os.path.join(os.path.dirname(DB_PATH), "reptile.db")
+    with sqlite3.connect(REPTILE_DB, timeout=20) as r_conn:
+        r_conn.row_factory = sqlite3.Row
+        placeholders = ','.join(['?'] * len(id_list))
+        rows = r_conn.execute(f"SELECT * FROM {table} WHERE id IN ({placeholders})", id_list).fetchall()
+        if not rows:
+            return "未找到选中的数据", 400
+
+    stoken = str(uuid.uuid4())[:12]
+    session_db[stoken] = []
+    
+    try:
+        with sqlite3.connect(DB_PATH, timeout=20) as conn:
+            db_values = []
+            for row in rows:
+                t, u, a = row['title'], row['url'], row['author']
+                tid = str(uuid.uuid4())[:12]
+                db_values.append((tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
+                session_db[stoken].append(tid)
+                
+                r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
+                threading.Thread(target=download_worker, args=(tid, t, u, a), daemon=True).start()
+                
+            if db_values:
+                conn.executemany("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", db_values)
+    except Exception as e:
+        app.logger.error(f"Error processing selected download: {e}", exc_info=True)
+        return f"发生了内部错误: {e}", 500
+        
+    return redirect(url_for('status_page', token=stoken))
+
 @app.route('/api/reptile/oneclick', methods=['POST'])
 def oneclick_download():
     REPTILE_DB = os.path.join(os.path.dirname(DB_PATH), "reptile.db")

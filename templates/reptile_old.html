@@ -11,15 +11,21 @@
     <div style="padding: 40px; max-width: 1000px; margin: 0 auto;">
         <h2>📚 爬虫历史记录</h2>
         <div style="margin-bottom: 20px;">
-            <form method="get" action="/reptile/old" style="display: flex; gap: 10px;">
+            <form method="get" action="/reptile/old" style="display: flex; gap: 10px; margin-bottom: 15px;">
                 <input type="text" name="search" value="{{ search }}" placeholder="输入标题或作者关键字" style="padding: 10px; width: 300px; border: 1px solid #ddd; border-radius: 4px;">
                 <button type="submit" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">🔍 搜索</button>
             </form>
+            <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
+                <button onclick="exportSelected('old')" style="background: #17a2b8; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold;">📄 导出选中 TXT</button>
+                <button onclick="downloadSelected('old')" style="background: #fd7e14; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold;">⬇️ 下载选中</button>
+                <span id="selected-count" style="font-weight: bold; color: #555;">已选: 0</span>
+            </div>
         </div>
         <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
             {% if tasks %}
                 <table style="width: 100%; border-collapse: collapse;">
                     <tr style="border-bottom: 2px solid #eee; text-align: left;">
+                        <th style="padding: 10px;"><input type="checkbox" id="select-all" onclick="toggleAll(this)"></th>
                         <th style="padding: 10px;">ID</th>
                         <th style="padding: 10px;">标题</th>
                         <th style="padding: 10px;">作者</th>
@@ -28,6 +34,7 @@
                     </tr>
                     {% for task in tasks %}
                     <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 10px;"><input type="checkbox" class="row-check" value="{{ task.id }}" data-title="{{ task.title }}" data-url="{{ task.url }}" data-author="{{ task.author }}" onchange="updateCount()"></td>
                         <td style="padding: 10px;">{{ task.id }}</td>
                         <td style="padding: 10px;">{{ task.title }}</td>
                         <td style="padding: 10px;">{{ task.author }}</td>
@@ -50,5 +57,53 @@
             {% endif %}
         </div>
     </div>
+
+    <script>
+    function toggleAll(master) {
+        document.querySelectorAll('.row-check').forEach(cb => cb.checked = master.checked);
+        updateCount();
+    }
+    function updateCount() {
+        const cnt = document.querySelectorAll('.row-check:checked').length;
+        document.getElementById('selected-count').textContent = '已选: ' + cnt;
+    }
+    function getSelectedData() {
+        const checked = document.querySelectorAll('.row-check:checked');
+        if (checked.length === 0) { alert('请先勾选至少一条数据'); return null; }
+        const ids = [];
+        checked.forEach(cb => ids.push(cb.value));
+        return ids;
+    }
+    function exportSelected(source) {
+        const ids = getSelectedData();
+        if (!ids) return;
+        const form = document.createElement('form');
+        form.method = 'GET';
+        form.action = '/api/reptile/export_selected';
+        const inputIds = document.createElement('input');
+        inputIds.type = 'hidden'; inputIds.name = 'ids'; inputIds.value = ids.join(',');
+        form.appendChild(inputIds);
+        const inputSrc = document.createElement('input');
+        inputSrc.type = 'hidden'; inputSrc.name = 'source'; inputSrc.value = source;
+        form.appendChild(inputSrc);
+        document.body.appendChild(form);
+        form.submit();
+    }
+    function downloadSelected(source) {
+        const ids = getSelectedData();
+        if (!ids) return;
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/api/reptile/download_selected';
+        const inputIds = document.createElement('input');
+        inputIds.type = 'hidden'; inputIds.name = 'ids'; inputIds.value = ids.join(',');
+        form.appendChild(inputIds);
+        const inputSrc = document.createElement('input');
+        inputSrc.type = 'hidden'; inputSrc.name = 'source'; inputSrc.value = source;
+        form.appendChild(inputSrc);
+        document.body.appendChild(form);
+        form.submit();
+    }
+    </script>
 </body>
 </html>

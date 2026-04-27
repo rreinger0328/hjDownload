@@ -286,19 +286,24 @@ def export_new_data():
         r_conn.execute("DELETE FROM new_data")
         r_conn.commit()
         
-    # Format txt
+    # --- 修复的关键部分：导出TXT格式 ---
     lines = []
     for row in rows:
         lines.append(f"标题: {row['title']}")
         lines.append(f"链接: {row['url']}")
         lines.append(f"作者: {row['author']}")
-        lines.append("-" * 30)
+        lines.append("-" * 30) # 分隔线
     
-    content = "\\n".join(lines) + "\\n"
+    # 使用真正的 \n 换行，并确保最后一行也有换行
+    content = "\n".join(lines) + "\n"
+    
     return Response(
         content,
         mimetype="text/plain",
-        headers={"Content-disposition": "attachment; filename=reptile_new_data.txt"}
+        headers={
+            "Content-disposition": "attachment; filename=reptile_new_data.txt",
+            "Content-Type": "text/plain; charset=utf-8"
+        }
     )
 
 @app.route('/api/reptile/oneclick', methods=['POST'])

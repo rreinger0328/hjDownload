@@ -79,7 +79,13 @@ def get_total_pages(soup):
 def fetch_page(page_num, pushed_urls):
     """抓取页面内容并按格式记录"""
     url = f"{BASE_URL}/page/{page_num}/" if page_num > 1 else BASE_URL
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    # 添加时间戳并设置请求头以强制绕过 CDN 和本地缓存
+    url += f"?t={int(time.time())}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    }
     
     print(f"正在读取: 第 {page_num} 页")
     try:
@@ -133,12 +139,18 @@ def main():
         if first_soup:
             total_pages = get_total_pages(first_soup)
             
-            # 如果第一页有更新，则尝试翻页查看是否有更早的未推送内容
+            # 允许容忍最多连续四页没有新内容，以防中间有旧内容插队导致漏爬
+            empty_pages = 0 if new_on_page > 0 else 1
             for p in range(2, total_pages + 1):
                 new_found, _ = fetch_page(p, pushed_urls)
-                # 如果某一页完全没有新东西，就停止翻页
                 if new_found == 0:
-                    break
+                    empty_pages += 1
+                    # 如果连续四页都没有新东西，就停止翻页
+                    if empty_pages >= 4:
+                        break
+                else:
+                    empty_pages = 0
+                    
                 time.sleep(1) # 翻页小延迟，避免频率过高
         
         print(f"检查完毕。等待 {CHECK_INTERVAL} 秒...")

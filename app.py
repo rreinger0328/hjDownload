@@ -18,7 +18,7 @@ DB_PATH = "/app/data/tasks.db"
 FFMPEG_PATH = "ffmpeg"
 FFPROBE_PATH = "ffprobe"
 MAX_THREADS = 3
-MIN_DURATION = 21600 # 6小时
+MIN_DURATION = 300 # 5分钟
 HISTORY_TOKEN = "manager_999"
 
 import logging

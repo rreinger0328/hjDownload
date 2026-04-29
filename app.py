@@ -18,7 +18,7 @@ DB_PATH = "/app/data/tasks.db"
 FFMPEG_PATH = "ffmpeg"
 FFPROBE_PATH = "ffprobe"
 MAX_THREADS = 3
-MIN_DURATION = 300 # 5分钟
+MIN_DURATION = 21600 # 6小时
 HISTORY_TOKEN = "manager_999"
 
 import logging
@@ -192,7 +192,11 @@ def index():
                 app.logger.info("Successfully connected to SQLite DB")
                 db_values = []
                 for i in range(len(titles)):
-                    t, u, a = titles[i], urls[i], (authors[i] if i<len(authors) else "Unknown")
+                    t = titles[i]
+                    u = urls[i] if i < len(urls) else ""
+                    a = authors[i] if i < len(authors) else "Unknown"
+                    if not u:
+                        continue
                     tid = str(uuid.uuid4())[:12]
                     db_values.append((tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
                     session_db[stoken].append(tid)

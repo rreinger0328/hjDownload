@@ -181,6 +181,8 @@ def index():
         content = request.form.get('video_txt', '')
         stoken = str(uuid.uuid4())[:12]
         session_db[stoken] = []
+        r.sadd("all_tokens", stoken)
+        r.set(f"token_time:{stoken}", time.strftime('%Y-%m-%d %H:%M:%S'))
         
         titles = re.findall(r"标题:\s*(.*?)\s*(?:\||$|\n)", content)
         urls = re.findall(r"链接:\s*(https?://[^\s\n|]+)", content)
@@ -200,6 +202,7 @@ def index():
                     tid = str(uuid.uuid4())[:12]
                     db_values.append((tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
                     session_db[stoken].append(tid)
+                    r.sadd(f"token:{stoken}:tasks", tid)
                     # 同步到 Redis
                     app.logger.info(f"Connecting to Redis to save task {tid}...")
                     r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
@@ -219,14 +222,39 @@ def index():
 
 @app.route('/status/<token>')
 def status_page(token):
-    if token not in session_db: return "Expired", 404
+    tids = r.smembers(f"token:{token}:tasks")
+    if not tids:
+        tids = session_db.get(token, [])
+    if not tids: return "Expired or Not Found", 404
     tasks = []
-    for tid in session_db[token]:
+    for tid in tids:
         data = r.hgetall(f"task:{tid}")
         if data:
             data['task_id'] = tid
             tasks.append(data)
     return render_template('status.html', tasks=tasks)
+
+@app.route('/tokens')
+def tokens_page():
+    all_tokens = r.smembers("all_tokens")
+    tokens_info = []
+    for t in all_tokens:
+        tids = r.smembers(f"token:{t}:tasks")
+        total = len(tids)
+        running = 0
+        for tid in tids:
+            done = r.hget(f"task:{tid}", "done")
+            if str(done) == "0" or done is None:
+                running += 1
+        add_time = r.get(f"token_time:{t}") or "未知"
+        tokens_info.append({
+            "token": t,
+            "total": total,
+            "running": running,
+            "time": add_time
+        })
+    tokens_info.sort(key=lambda x: x["time"], reverse=True)
+    return render_template('tokens.html', tokens=tokens_info)
 
 @app.route('/history/<token>')
 def history_page(token):
@@ -366,6 +394,8 @@ def download_selected():
 
     stoken = str(uuid.uuid4())[:12]
     session_db[stoken] = []
+    r.sadd("all_tokens", stoken)
+    r.set(f"token_time:{stoken}", time.strftime('%Y-%m-%d %H:%M:%S'))
     
     try:
         with sqlite3.connect(DB_PATH, timeout=20) as conn:
@@ -375,6 +405,7 @@ def download_selected():
                 tid = str(uuid.uuid4())[:12]
                 db_values.append((tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
                 session_db[stoken].append(tid)
+                r.sadd(f"token:{stoken}:tasks", tid)
                 
                 r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
                 threading.Thread(target=download_worker, args=(tid, t, u, a), daemon=True).start()
@@ -403,6 +434,8 @@ def oneclick_download():
 
     stoken = str(uuid.uuid4())[:12]
     session_db[stoken] = []
+    r.sadd("all_tokens", stoken)
+    r.set(f"token_time:{stoken}", time.strftime('%Y-%m-%d %H:%M:%S'))
     
     try:
         with sqlite3.connect(DB_PATH, timeout=20) as conn:
@@ -412,6 +445,7 @@ def oneclick_download():
                 tid = str(uuid.uuid4())[:12]
                 db_values.append((tid, t, a, '排队中', '00:00:00', 0, time.strftime('%m-%d %H:%M')))
                 session_db[stoken].append(tid)
+                r.sadd(f"token:{stoken}:tasks", tid)
                 
                 # 同步到 Redis
                 r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})

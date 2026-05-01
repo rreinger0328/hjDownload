@@ -127,10 +127,15 @@ def get_video_src(page_url):
     finally:
         if driver: driver.quit()
 
-semaphore = threading.Semaphore(MAX_THREADS)
+m3u8_semaphore = threading.Semaphore(MAX_THREADS)
+mp4_semaphore = threading.Semaphore(MAX_THREADS)
+
 def download_worker(task_id, title, url, author, video_type="m3u8"):
     logging.info(f"[Worker] Started task {task_id} for '{title}' (type: {video_type})")
-    with semaphore:
+    
+    current_semaphore = m3u8_semaphore if video_type == "m3u8" else mp4_semaphore
+    
+    with current_semaphore:
         author_folder = re.sub(r'[\\/:*?"<>|]', '_', author).strip() or "未分类"
         target_dir = os.path.join(BASE_SAVE_DIR, author_folder)
         os.makedirs(target_dir, exist_ok=True)

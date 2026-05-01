@@ -128,28 +128,32 @@ def get_video_src(page_url):
         if driver: driver.quit()
 
 semaphore = threading.Semaphore(MAX_THREADS)
-def download_worker(task_id, title, url, author):
-    logging.info(f"[Worker] Started task {task_id} for '{title}'")
+def download_worker(task_id, title, url, author, video_type="m3u8"):
+    logging.info(f"[Worker] Started task {task_id} for '{title}' (type: {video_type})")
     with semaphore:
         author_folder = re.sub(r'[\\/:*?"<>|]', '_', author).strip() or "未分类"
         target_dir = os.path.join(BASE_SAVE_DIR, author_folder)
         os.makedirs(target_dir, exist_ok=True)
         logging.info(f"[Worker] Task {task_id} target directory: {target_dir}")
 
-        update_and_broadcast(task_id, status="解析中...")
-        logging.info(f"[Worker] Task {task_id} fetching m3u8 src via Selenium...")
-        m3u8 = get_video_src(url)
-        if not m3u8:
-            logging.error(f"[Worker] Task {task_id} failed to get m3u8.")
-            update_and_broadcast(task_id, status="解析失败", done=True)
-            return
-        logging.info(f"[Worker] Task {task_id} extracted m3u8: {m3u8[:50]}...")
+        if video_type == "m3u8":
+            update_and_broadcast(task_id, status="解析中...")
+            logging.info(f"[Worker] Task {task_id} fetching m3u8 src via Selenium...")
+            src_url = get_video_src(url)
+            if not src_url:
+                logging.error(f"[Worker] Task {task_id} failed to get m3u8.")
+                update_and_broadcast(task_id, status="解析失败", done=True)
+                return
+            logging.info(f"[Worker] Task {task_id} extracted m3u8: {src_url[:50]}...")
+        else:
+            src_url = url
+            logging.info(f"[Worker] Task {task_id} using direct mp4 url: {src_url[:50]}...")
 
         update_and_broadcast(task_id, status="下载中")
         safe_title = re.sub(r'[\\/:*?<>|]', '_', title)[:80]
         out_path = os.path.join(target_dir, f"{safe_title}.mp4")
         
-        cmd = [FFMPEG_PATH, '-headers', "Referer: https://www.hjw01.com/\r\n", '-i', m3u8, '-c', 'copy', '-y', out_path]
+        cmd = [FFMPEG_PATH, '-headers', "Referer: https://www.hjw01.com/\r\n", '-i', src_url, '-c', 'copy', '-y', out_path]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
         
         last_broadcast_time = 0
@@ -179,6 +183,7 @@ def index():
     if request.method == 'POST':
         app.logger.info("Received POST request to begin batch download")
         content = request.form.get('video_txt', '')
+        video_type = request.form.get('video_type', 'm3u8')
         stoken = str(uuid.uuid4())[:12]
         session_db[stoken] = []
         r.sadd("all_tokens", stoken)
@@ -207,7 +212,7 @@ def index():
                     app.logger.info(f"Connecting to Redis to save task {tid}...")
                     r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
                     app.logger.info(f"Task {tid} successfully written to Redis and starting background worker.")
-                    threading.Thread(target=download_worker, args=(tid, t, u, a), daemon=True).start()
+                    threading.Thread(target=download_worker, args=(tid, t, u, a, video_type), daemon=True).start()
                 
                 if db_values:
                     app.logger.info(f"Batch inserting {len(db_values)} tasks into SQLite...")

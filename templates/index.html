@@ -8,7 +8,7 @@
         <a href="/reptile/old" style="color: #fff; text-decoration: none; font-weight: bold;">📚 全部爬记录</a>
         <a href="/history/manager_999" style="color: #fff; text-decoration: none; font-weight: bold;">⬇️ 下载历史</a>
     </nav>
-    <div style="padding: 40px; display: flex; justify-content: center; align-items: center; flex-direction: column;">
+    <div style="padding: 40px; display: flex; justify-content: center; align-items: center; flex-direction: column; gap: 30px;">
         <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 800px;">
             <h2>🚀 HJW 自动分类下载器 (WebSocket 版)</h2>
             <form method="post">
@@ -18,6 +18,16 @@
                     <label><input type="radio" name="video_type" value="mp4"> MP4 (直接下载)</label>
                 </div>
                 <button type="submit" style="width: 100%; background: #28a745; color: white; padding: 15px; border: none; margin-top: 10px; cursor: pointer;">开始批量下载</button>
+            </form>
+        </div>
+
+        <!-- M3U8 直接下载输入框 -->
+        <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 800px;">
+            <h2>⚡ M3U8 直接下载</h2>
+            <form method="post">
+                <textarea name="video_txt_direct" style="width: 100%; height: 300px; padding: 10px;" placeholder="标题: xxx | 链接: xxx&#10;作者: xxx"></textarea>
+                <input type="hidden" name="video_type" value="m3u8_direct">
+                <button type="submit" style="width: 100%; background: #007bff; color: white; padding: 15px; border: none; margin-top: 10px; cursor: pointer;">开始直接下载</button>
             </form>
         </div>
     </div>

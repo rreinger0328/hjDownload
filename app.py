@@ -152,7 +152,7 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
             logging.info(f"[Worker] Task {task_id} extracted m3u8: {src_url[:50]}...")
         else:
             src_url = url
-            logging.info(f"[Worker] Task {task_id} using direct mp4 url: {src_url[:50]}...")
+            logging.info(f"[Worker] Task {task_id} using direct url ({video_type}): {src_url[:50]}...")
 
         update_and_broadcast(task_id, status="下载中")
         safe_title = re.sub(r'[\\/:*?<>|]', '_', title)[:80]
@@ -187,8 +187,13 @@ session_db = {}
 def index():
     if request.method == 'POST':
         app.logger.info("Received POST request to begin batch download")
-        content = request.form.get('video_txt', '')
         video_type = request.form.get('video_type', 'm3u8')
+        
+        if video_type == 'm3u8_direct':
+            content = request.form.get('video_txt_direct', '')
+        else:
+            content = request.form.get('video_txt', '')
+            
         stoken = str(uuid.uuid4())[:12]
         session_db[stoken] = []
         r.sadd("all_tokens", stoken)

@@ -118,14 +118,23 @@ def get_video_src(page_url):
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         driver.get(page_url)
-        video_el = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, "video.dplayer-video-current")))
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, "video.dplayer-video-current")))
+        
         for _ in range(10):
-            src = video_el.get_attribute("src")
-            if src and "m3u8" in src: return src
+            video_els = driver.find_elements(By.CSS_SELECTOR, "video.dplayer-video-current")
+            srcs = []
+            for el in video_els:
+                src = el.get_attribute("src")
+                if src and "m3u8" in src:
+                    if src not in srcs:
+                        srcs.append(src)
+            if srcs:
+                return srcs
             time.sleep(1)
-    except: return None
+    except: return []
     finally:
         if driver: driver.quit()
+    return []
 
 m3u8_semaphore = threading.Semaphore(MAX_THREADS)
 mp4_semaphore = threading.Semaphore(MAX_THREADS)
@@ -144,43 +153,64 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
         if video_type == "m3u8":
             update_and_broadcast(task_id, status="解析中...")
             logging.info(f"[Worker] Task {task_id} fetching m3u8 src via Selenium...")
-            src_url = get_video_src(url)
-            if not src_url:
+            src_urls = get_video_src(url)
+            if not src_urls:
                 logging.error(f"[Worker] Task {task_id} failed to get m3u8.")
                 update_and_broadcast(task_id, status="解析失败", done=True)
                 return
-            logging.info(f"[Worker] Task {task_id} extracted m3u8: {src_url[:50]}...")
+            logging.info(f"[Worker] Task {task_id} extracted {len(src_urls)} m3u8 links.")
         else:
-            src_url = url
-            logging.info(f"[Worker] Task {task_id} using direct url ({video_type}): {src_url[:50]}...")
+            src_urls = [url]
+            logging.info(f"[Worker] Task {task_id} using direct url ({video_type}): {url[:50]}...")
 
-        update_and_broadcast(task_id, status="下载中")
         safe_title = re.sub(r'[\\/:*?<>|]', '_', title)[:80]
-        out_path = os.path.join(target_dir, f"{safe_title}.mp4")
         
-        cmd = [FFMPEG_PATH, '-headers', "Referer: https://www.hjw01.com/\r\n", '-i', src_url, '-c', 'copy', '-y', out_path]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
+        all_success = True
+        any_success = False
+        skipped_count = 0
         
-        last_broadcast_time = 0
-        for line in proc.stdout:
-            if "time=" in line:
-                match = re.search(r"time=(\d{2}:\d{2}:\d{2})", line)
-                if match:
-                    # 频率限制：0.5秒广播一次，大幅减少负载
-                    if time.time() - last_broadcast_time > 0.5:
-                        update_and_broadcast(task_id, progress=match.group(1))
-                        last_broadcast_time = time.time()
-        
-        proc.wait()
-        logging.info(f"[Worker] Task {task_id} FFmpeg exited with code {proc.returncode}")
-        if proc.returncode == 0 and os.path.exists(out_path) and is_too_short(out_path):
-            logging.warning(f"[Worker] Task {task_id} video is too short, skipping.")
-            os.remove(out_path)
-            update_and_broadcast(task_id, status="已跳过(不足5min)", done=True)
+        for idx, src_url in enumerate(src_urls):
+            part_suffix = f"-第{idx+1}集" if len(src_urls) > 1 else ""
+            status_text = f"下载中({idx+1}/{len(src_urls)})" if len(src_urls) > 1 else "下载中"
+            update_and_broadcast(task_id, status=status_text)
+            
+            out_path = os.path.join(target_dir, f"{safe_title}{part_suffix}.mp4")
+            cmd = [FFMPEG_PATH, '-headers', "Referer: https://www.hjw01.com/\r\n", '-i', src_url, '-c', 'copy', '-y', out_path]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
+            
+            last_broadcast_time = 0
+            for line in proc.stdout:
+                if "time=" in line:
+                    match = re.search(r"time=(\d{2}:\d{2}:\d{2})", line)
+                    if match:
+                        if time.time() - last_broadcast_time > 0.5:
+                            update_and_broadcast(task_id, progress=match.group(1))
+                            last_broadcast_time = time.time()
+            
+            proc.wait()
+            logging.info(f"[Worker] Task {task_id} part {idx+1} FFmpeg exited with code {proc.returncode}")
+            
+            if proc.returncode == 0 and os.path.exists(out_path):
+                if is_too_short(out_path):
+                    logging.warning(f"[Worker] Task {task_id} video part {idx+1} is too short, skipping.")
+                    os.remove(out_path)
+                    skipped_count += 1
+                else:
+                    any_success = True
+            else:
+                all_success = False
+
+        if skipped_count == len(src_urls):
+            final_status = "已跳过(不足5min)"
+        elif any_success and all_success:
+            final_status = "已完成"
+        elif any_success and not all_success:
+            final_status = "部分完成"
         else:
-            final_status = "已完成" if proc.returncode == 0 else "错误"
-            logging.info(f"[Worker] Task {task_id} finished with status: {final_status}")
-            update_and_broadcast(task_id, status=final_status, done=True)
+            final_status = "错误"
+            
+        logging.info(f"[Worker] Task {task_id} finished with status: {final_status}")
+        update_and_broadcast(task_id, status=final_status, done=True)
 
 session_db = {}
 @app.route('/', methods=['GET', 'POST'])

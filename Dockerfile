@@ -35,20 +35,6 @@ RUN apt-get update && \
     apt-get install -y /tmp/chrome.deb || apt-get install -fy && \
     rm /tmp/chrome.deb && rm -rf /var/lib/apt/lists/*
 
-# 6.5 预装 ChromeDriver（从 npmmirror 拉取，国内可访问，避免运行时 webdriver_manager 去 Google CDN 下载导致卡死）
-# 提取 Chrome 主版本号，下载对应版本的 chromedriver
-RUN apt-get update && apt-get install -y unzip --no-install-recommends && \
-    CHROME_VER=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+' | head -1) && \
-    CHROME_MAJOR=$(echo $CHROME_VER | cut -d. -f1) && \
-    echo "Chrome version: $CHROME_VER, major: $CHROME_MAJOR" && \
-    curl -sSL -o /tmp/chromedriver.zip \
-      "https://registry.npmmirror.com/-/binary/chromedriver/${CHROME_MAJOR}/chromedriver-linux64.zip" && \
-    unzip -o /tmp/chromedriver.zip -d /usr/local/bin/ && \
-    chmod +x /usr/local/bin/chromedriver && \
-    rm /tmp/chromedriver.zip && \
-    rm -rf /var/lib/apt/lists/* && \
-    echo "ChromeDriver installed: $(chromedriver --version)"
-
 # 7. 将当前电脑/NAS 项目目录下的所有文件（app.py, templates 文件夹等）复制到容器的 /app 目录。
 COPY . .
 
@@ -61,6 +47,14 @@ COPY . .
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
     flask flask-socketio eventlet selenium webdriver-manager redis \
     requests beautifulsoup4
+
+# 8.5 预装 ChromeDriver（构建时用 webdriver_manager 下载并缓存到 /usr/local/bin/）
+# GitHub Actions runner 在海外，能正常访问 Google CDN；NAS 拉取镜像后直接使用，免去运行时下载
+RUN python -c "import shutil, os; from webdriver_manager.chrome import ChromeDriverManager; \
+    path = ChromeDriverManager().install(); \
+    shutil.copy(path, '/usr/local/bin/chromedriver'); \
+    os.chmod('/usr/local/bin/chromedriver', 0o755); \
+    print(f'ChromeDriver copied from {path} to /usr/local/bin/chromedriver')"
 
 # 9. 声明容器运行时监听的端口号。
 # 对应 docker-compose.yml 里的 5000:5000。

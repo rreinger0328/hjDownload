@@ -109,6 +109,19 @@ def is_too_short(file_path):
     except: pass
     return False
 
+def _log_chromedriver_output():
+    """输出 ChromeDriver 日志，用于诊断启动失败"""
+    log_path = "/tmp/chromedriver.log"
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, "r") as f:
+                content = f.read()
+            if content.strip():
+                logging.error(f"[Selenium] ChromeDriver 日志:\n{content[-2000:]}")
+            os.remove(log_path)
+        except:
+            pass
+
 def _get_chromedriver_path():
     """获取 ChromeDriver 路径。
     Docker 环境中 chromedriver 已在构建时预装到 /usr/local/bin/，直接使用；
@@ -140,10 +153,22 @@ def get_video_src(page_url):
     from selenium.webdriver.support import expected_conditions as EC
 
     options = Options()
-    options.add_argument("--headless")
+    if IS_WINDOWS:
+        options.add_argument("--headless")
+    else:
+        options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-setuid-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--no-first-run")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-sync")
+    options.add_argument("--disable-translate")
+    options.add_argument("--disable-default-apps")
+    if not IS_WINDOWS:
+        options.add_argument("--remote-debugging-port=0")
     if IS_WINDOWS:
         options.binary_location = r"C:\Users\Administrator\AppData\Local\Google\Chrome\Bin\chrome.exe"
     else:
@@ -155,10 +180,10 @@ def get_video_src(page_url):
         driver_path = _get_chromedriver_path()
         logging.info(f"[Selenium] ChromeDriver 就绪: {driver_path}")
 
-        # 2) 启动 Chrome（超时 30s）
-        logging.info("[Selenium] 正在启动 Chrome 浏览器 (超时 30s)...")
-        with eventlet.Timeout(30, TimeoutError("Chrome 启动超时 (30s)")):
-            service = Service(driver_path)
+        # 2) 启动 Chrome（超时 60s）
+        logging.info("[Selenium] 正在启动 Chrome 浏览器 (超时 60s)...")
+        service = Service(driver_path, log_output='/tmp/chromedriver.log')
+        with eventlet.Timeout(60, TimeoutError("Chrome 启动超时 (60s)")):
             driver = webdriver.Chrome(service=service, options=options)
         driver.set_page_load_timeout(30)
         driver.set_script_timeout(30)
@@ -192,6 +217,7 @@ def get_video_src(page_url):
 
     except TimeoutError:
         logging.error("[Selenium] 超时异常，终止当前解析任务")
+        _log_chromedriver_output()
         return []
     except Exception as e:
         logging.error(f"[Selenium] 异常: {type(e).__name__}: {e}")

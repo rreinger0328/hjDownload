@@ -238,26 +238,59 @@ def get_video_src(page_url):
         driver.get(page_url)
         logging.info("[Selenium] 页面加载完成，等待视频元素出现...")
 
-        # 4) 等待视频元素（超时 20s）
-        logging.info("[Selenium] 等待视频元素出现 (超时 20s)...")
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, "video.dplayer-video-current")))
-        logging.info("[Selenium] 视频元素已出现，开始提取 m3u8 链接...")
+        # 4) 等待视频元素（超时 25s），多策略回退
+        logging.info("[Selenium] 等待视频元素出现 (超时 25s)...")
+        srcs = []
+        selectors = [
+            "video.dplayer-video-current",
+            "video[src*='m3u8']",
+            "div.dplayer-video-wrap video",
+            ".dplayer-video-wrap video",
+        ]
+        for sel in selectors:
+            try:
+                WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, sel)))
+                logging.info(f"[Selenium] 选择器 '{sel}' 匹配成功")
+            except:
+                logging.info(f"[Selenium] 选择器 '{sel}' 未匹配，尝试下一个")
+                continue
 
-        # 5) 扫描提取 m3u8
-        for i in range(10):
-            video_els = driver.find_elements(By.CSS_SELECTOR, "video.dplayer-video-current")
-            logging.info(f"[Selenium] 第 {i+1} 次扫描: 找到 {len(video_els)} 个视频元素")
-            srcs = []
-            for el in video_els:
-                src = el.get_attribute("src")
-                if src and "m3u8" in src:
-                    if src not in srcs:
+        # 5) 诊断：输出页面上所有 video 及 iframe 元素
+        video_els = driver.find_elements(By.TAG_NAME, "video")
+        iframe_els = driver.find_elements(By.TAG_NAME, "iframe")
+        logging.info(f"[Selenium] 诊断: 页面共 {len(video_els)} 个 video, {len(iframe_els)} 个 iframe")
+        for i, el in enumerate(video_els[:5]):
+            src = el.get_attribute("src") or ""
+            cid = el.get_attribute("id") or ""
+            cls = el.get_attribute("class") or ""
+            logging.info(f"[Selenium]   video[{i}] id={cid} class={cls} src[:80]={src[:80]}")
+
+        # 6) 循环扫描提取 m3u8
+        for i in range(15):
+            # 尝试所有可能的选择器
+            for sel in selectors + ["video", "video[src]"]:
+                els = driver.find_elements(By.CSS_SELECTOR, sel)
+                for el in els:
+                    src = el.get_attribute("src")
+                    if src and "m3u8" in src and src not in srcs:
                         srcs.append(src)
             if srcs:
                 logging.info(f"[Selenium] 成功提取 {len(srcs)} 个 m3u8 链接")
                 return srcs
+            if len(srcs) == 0 and i == 0:
+                # 第一次没找到就执行 JS 兜底
+                try:
+                    js_src = driver.execute_script(
+                        "var v=document.querySelector('video[src*=\".m3u8\"]'); return v?v.src:'';"
+                    )
+                    if js_src and "m3u8" in js_src and js_src not in srcs:
+                        srcs.append(js_src)
+                        logging.info(f"[Selenium] JS 兜底提取到 m3u8: {js_src[:80]}...")
+                        return srcs
+                except:
+                    pass
             time.sleep(1)
-        logging.warning("[Selenium] 10 次扫描均未获取到 m3u8 链接")
+        logging.warning(f"[Selenium] {i+1} 次扫描均未获取到 m3u8 链接")
 
     except TimeoutError:
         logging.error("[Selenium] 超时异常，终止当前解析任务")

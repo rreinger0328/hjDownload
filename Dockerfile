@@ -1,6 +1,6 @@
-# 1. 使用 Python 3.9 的官方 slim（精简）版作为基础镜像。
+# 1. 使用 Python 3.11 的官方 slim（精简）版作为基础镜像。
 # slim 版去掉了不必要的工具，能大幅减小镜像体积，适合生产环境。
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 # 2. 设置系统环境变量：
 # DEBIAN_FRONTEND=noninteractive: 在安装软件时自动确认所有提示，防止构建卡死在地理位置或时区确认上。

@@ -115,24 +115,30 @@ def _chrome_preflight_check():
         return
     try:
         logging.info("[Selenium] 预检: 测试 Chrome 能否启动...")
+        # 使用 Linux timeout 命令强制杀进程，eventlet 下 subprocess.run(timeout=) 不可靠
         cmd = [
+            "timeout", "30",
             "/usr/bin/google-chrome",
             "--headless=new",
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
+            "--disable-async-dns",
+            "--dns-prefetch-disable",
+            "--disable-component-update",
+            "--disable-features=AsyncDns,OptimizationHints",
             "--dump-dom",
             "about:blank"
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(cmd, capture_output=True, text=True)
         logging.info(f"[Selenium] 预检: Chrome 退出码 {proc.returncode}")
-        if proc.returncode != 0:
+        if proc.returncode == 124:
+            logging.error("[Selenium] 预检: Chrome 测试超时 (被 timeout 命令杀死)")
+        elif proc.returncode != 0:
             logging.error(f"[Selenium] 预检失败 stderr:\n{proc.stderr[-2000:]}")
         else:
             logging.info("[Selenium] 预检: Chrome 正常启动")
-    except subprocess.TimeoutExpired:
-        logging.error("[Selenium] 预检: Chrome 测试超时 (30s)")
     except FileNotFoundError:
         logging.error("[Selenium] 预检: Chrome 二进制不存在 /usr/bin/google-chrome")
     except Exception as e:
@@ -196,6 +202,10 @@ def get_video_src(page_url):
     options.add_argument("--disable-sync")
     options.add_argument("--disable-translate")
     options.add_argument("--disable-default-apps")
+    options.add_argument("--disable-component-update")
+    options.add_argument("--disable-async-dns")
+    options.add_argument("--dns-prefetch-disable")
+    options.add_argument("--disable-features=AsyncDns,OptimizationHints")
     options.add_argument("--blink-settings=imagesEnabled=false")  # 禁用图片，加快加载
     options.add_argument("--disable-software-rasterizer")
     if not IS_WINDOWS:

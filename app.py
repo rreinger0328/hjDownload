@@ -219,7 +219,7 @@ def get_video_src(page_url):
         service = Service(driver_path, log_output='/tmp/chromedriver.log')
         with eventlet.Timeout(60, TimeoutError("Chrome 启动超时 (60s)")):
             driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(30)
+        driver.set_page_load_timeout(60)
         driver.set_script_timeout(30)
         logging.info("[Selenium] Chrome 浏览器已启动")
 
@@ -314,7 +314,23 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
             update_and_broadcast(task_id, status=status_text)
             
             out_path = os.path.join(target_dir, f"{safe_title}{part_suffix}.mp4")
-            cmd = [FFMPEG_PATH, '-headers', "Referer: https://www.hjw01.com/\r\n", '-i', src_url, '-c', 'copy', '-y', out_path]
+            headers = (
+                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\r\n"
+                "Accept-Language: zh-CN,zh;q=0.9\r\n"
+                "Cache-Control: max-age=0\r\n"
+                "Priority: u=0, i\r\n"
+                "Referer: https://nyvhkxuk.cc/\r\n"
+                "Sec-CH-UA: \"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"\r\n"
+                "Sec-CH-UA-Mobile: ?0\r\n"
+                "Sec-CH-UA-Platform: \"Windows\"\r\n"
+                "Sec-Fetch-Dest: document\r\n"
+                "Sec-Fetch-Mode: navigate\r\n"
+                "Sec-Fetch-Site: cross-site\r\n"
+                "Sec-Fetch-User: ?1\r\n"
+                "Upgrade-Insecure-Requests: 1\r\n"
+                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+            )
+            cmd = [FFMPEG_PATH, '-headers', headers, '-i', src_url, '-c', 'copy', '-y', out_path]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
             
             last_broadcast_time = 0

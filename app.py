@@ -4,17 +4,28 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import eventlet
 eventlet.monkey_patch()
 
-import os, re, time, threading, subprocess, uuid, sqlite3, redis
+import os, re, time, threading, subprocess, uuid, sqlite3, redis, sys
 from flask import Flask, render_template, request, redirect, url_for, Response
 from flask_socketio import SocketIO
+
+# --- 加载 .env ---
+env_path = os.path.join(os.path.dirname(__file__), '.env')
+if os.path.exists(env_path):
+    with open(env_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.strip() and not line.startswith('#') and '=' in line:
+                key, val = line.strip().split('=', 1)
+                os.environ[key.strip()] = val.strip()
+
+IS_WINDOWS = sys.platform == 'win32'
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'hjw_redis_secure_key'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # --- 配置 ---
-BASE_SAVE_DIR = "/downloads"
-DB_PATH = "/app/data/tasks.db"
+BASE_SAVE_DIR = os.path.join(os.path.dirname(__file__), "downloads") if IS_WINDOWS else "/downloads"
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "tasks.db") if IS_WINDOWS else "/app/data/tasks.db"
 FFMPEG_PATH = "ffmpeg"
 FFPROBE_PATH = "ffprobe"
 MAX_THREADS = 3
@@ -98,30 +109,64 @@ def is_too_short(file_path):
     except: pass
     return False
 
+def _install_chromedriver():
+    """在独立线程中安装 ChromeDriver，支持超时控制"""
+    from webdriver_manager.chrome import ChromeDriverManager
+    return ChromeDriverManager().install()
+
 def get_video_src(page_url):
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
-    from webdriver_manager.chrome import ChromeDriverManager
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.binary_location = "/usr/bin/google-chrome"
-    
+    options.add_argument("--disable-gpu")
+    if IS_WINDOWS:
+        options.binary_location = r"C:\Users\Administrator\AppData\Local\Google\Chrome\Bin\chrome.exe"
+    else:
+        options.binary_location = "/usr/bin/google-chrome"
+
     driver = None
     try:
-        service = Service(ChromeDriverManager().install())
+        # 1) 安装/检查 ChromeDriver（超时 60s）
+        logging.info("[Selenium] 正在安装/检查 ChromeDriver (超时 60s)...")
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_install_chromedriver)
+                driver_path = future.result(timeout=60)
+        except FutureTimeout:
+            raise TimeoutError("ChromeDriver 下载超时 (60s)，可能 CDN 不通")
+        logging.info(f"[Selenium] ChromeDriver 就绪: {driver_path}")
+
+        # 2) 启动 Chrome（超时 30s）
+        logging.info("[Selenium] 正在启动 Chrome 浏览器 (超时 30s)...")
+        service = Service(driver_path)
         driver = webdriver.Chrome(service=service, options=options)
+        driver.set_page_load_timeout(30)
+        driver.set_script_timeout(30)
+        logging.info("[Selenium] Chrome 浏览器已启动")
+
+        # 3) 访问页面（超时 30s，由 set_page_load_timeout 控制）
+        logging.info(f"[Selenium] 正在访问页面 (超时 30s): {page_url[:80]}...")
         driver.get(page_url)
+        logging.info("[Selenium] 页面加载完成，等待视频元素出现...")
+
+        # 4) 等待视频元素（超时 20s）
+        logging.info("[Selenium] 等待视频元素出现 (超时 20s)...")
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, "video.dplayer-video-current")))
-        
-        for _ in range(10):
+        logging.info("[Selenium] 视频元素已出现，开始提取 m3u8 链接...")
+
+        # 5) 扫描提取 m3u8
+        for i in range(10):
             video_els = driver.find_elements(By.CSS_SELECTOR, "video.dplayer-video-current")
+            logging.info(f"[Selenium] 第 {i+1} 次扫描: 找到 {len(video_els)} 个视频元素")
             srcs = []
             for el in video_els:
                 src = el.get_attribute("src")
@@ -129,39 +174,57 @@ def get_video_src(page_url):
                     if src not in srcs:
                         srcs.append(src)
             if srcs:
+                logging.info(f"[Selenium] 成功提取 {len(srcs)} 个 m3u8 链接")
                 return srcs
             time.sleep(1)
-    except: return []
+        logging.warning("[Selenium] 10 次扫描均未获取到 m3u8 链接")
+
+    except TimeoutError:
+        logging.error("[Selenium] 超时异常，终止当前解析任务")
+        return []
+    except Exception as e:
+        logging.error(f"[Selenium] 异常: {type(e).__name__}: {e}")
+        import traceback
+        logging.error(f"[Selenium] 堆栈:\n{traceback.format_exc()}")
+        return []
     finally:
-        if driver: driver.quit()
+        if driver:
+            logging.info("[Selenium] 正在关闭 Chrome...")
+            try:
+                driver.quit()
+            except:
+                pass
+            logging.info("[Selenium] Chrome 已关闭")
     return []
 
 m3u8_semaphore = threading.Semaphore(MAX_THREADS)
 mp4_semaphore = threading.Semaphore(MAX_THREADS)
 
 def download_worker(task_id, title, url, author, video_type="m3u8"):
-    logging.info(f"[Worker] Started task {task_id} for '{title}' (type: {video_type})")
+    logging.info(f"[Worker] 任务 {task_id} 开始下载 '{title}' (类型: {video_type})")
     
     current_semaphore = m3u8_semaphore if video_type == "m3u8" else mp4_semaphore
     
     with current_semaphore:
+        logging.info(f"[Worker] 任务 {task_id} 已获取信号量，开始处理")
         author_folder = re.sub(r'[\\/:*?"<>|]', '_', author).strip() or "未分类"
         target_dir = os.path.join(BASE_SAVE_DIR, author_folder)
         os.makedirs(target_dir, exist_ok=True)
-        logging.info(f"[Worker] Task {task_id} target directory: {target_dir}")
+        logging.info(f"[Worker] 任务 {task_id} 目标目录: {target_dir}")
 
         if video_type == "m3u8":
             update_and_broadcast(task_id, status="解析中...")
-            logging.info(f"[Worker] Task {task_id} fetching m3u8 src via Selenium...")
+            logging.info(f"[Worker] 任务 {task_id} 状态已更新为「解析中...」，即将调用 get_video_src()")
             src_urls = get_video_src(url)
+            logging.info(f"[Worker] 任务 {task_id} get_video_src() 返回，结果数量: {len(src_urls) if src_urls else 0}")
             if not src_urls:
-                logging.error(f"[Worker] Task {task_id} failed to get m3u8.")
+                logging.error(f"[Worker] 任务 {task_id} 获取 m3u8 失败。")
                 update_and_broadcast(task_id, status="解析失败", done=True)
                 return
-            logging.info(f"[Worker] Task {task_id} extracted {len(src_urls)} m3u8 links.")
+            logging.info(f"[Worker] 任务 {task_id} 提取到 {len(src_urls)} 个 m3u8 链接。")
         else:
             src_urls = [url]
-            logging.info(f"[Worker] Task {task_id} using direct url ({video_type}): {url[:50]}...")
+            logging.info(f"[Worker] 任务 {task_id} 使用直链 ({video_type}): {url[:50]}...")
 
         safe_title = re.sub(r'[\\/:*?<>|]', '_', title)[:80]
         
@@ -188,11 +251,11 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
                             last_broadcast_time = time.time()
             
             proc.wait()
-            logging.info(f"[Worker] Task {task_id} part {idx+1} FFmpeg exited with code {proc.returncode}")
+            logging.info(f"[Worker] 任务 {task_id} 第 {idx+1} 部分 FFmpeg 退出码: {proc.returncode}")
             
             if proc.returncode == 0 and os.path.exists(out_path):
                 if is_too_short(out_path):
-                    logging.warning(f"[Worker] Task {task_id} video part {idx+1} is too short, skipping.")
+                    logging.warning(f"[Worker] 任务 {task_id} 第 {idx+1} 部分视频时长不足，已跳过。")
                     os.remove(out_path)
                     skipped_count += 1
                 else:
@@ -209,14 +272,14 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
         else:
             final_status = "错误"
             
-        logging.info(f"[Worker] Task {task_id} finished with status: {final_status}")
+        logging.info(f"[Worker] 任务 {task_id} 结束，状态: {final_status}")
         update_and_broadcast(task_id, status=final_status, done=True)
 
 session_db = {}
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
-        app.logger.info("Received POST request to begin batch download")
+        app.logger.info("收到 POST 请求，开始批量下载")
         video_type = request.form.get('video_type', 'm3u8')
         
         if video_type == 'm3u8_direct':
@@ -232,11 +295,11 @@ def index():
         titles = re.findall(r"标题:\s*(.*?)\s*(?:\||$|\n)", content)
         urls = re.findall(r"链接:\s*(https?://[^\s\n|]+)", content)
         authors = re.findall(r"作者:\s*(.*?)\s*(?:\n|$)", content)
-        app.logger.info(f"Parsed {len(titles)} tasks from POST input")
+        app.logger.info(f"从 POST 输入中解析到 {len(titles)} 个任务")
         
         try:
             with sqlite3.connect(DB_PATH, timeout=20) as conn:
-                app.logger.info("Successfully connected to SQLite DB")
+                app.logger.info("成功连接 SQLite 数据库")
                 db_values = []
                 for i in range(len(titles)):
                     t = titles[i]
@@ -249,17 +312,17 @@ def index():
                     session_db[stoken].append(tid)
                     r.sadd(f"token:{stoken}:tasks", tid)
                     # 同步到 Redis
-                    app.logger.info(f"Connecting to Redis to save task {tid}...")
+                    app.logger.info(f"正在连接 Redis 保存任务 {tid}...")
                     r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
-                    app.logger.info(f"Task {tid} successfully written to Redis and starting background worker.")
+                    app.logger.info(f"任务 {tid} 已写入 Redis，正在启动后台工作线程。")
                     threading.Thread(target=download_worker, args=(tid, t, u, a, video_type), daemon=True).start()
                 
                 if db_values:
-                    app.logger.info(f"Batch inserting {len(db_values)} tasks into SQLite...")
+                    app.logger.info(f"批量插入 {len(db_values)} 个任务到 SQLite...")
                     conn.executemany("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", db_values)
-            app.logger.info("All tasks processed, preparing to redirect.")
+            app.logger.info("所有任务已处理，准备重定向。")
         except Exception as e:
-            app.logger.error(f"Error processing POST request: {e}", exc_info=True)
+            app.logger.error(f"处理 POST 请求出错: {e}", exc_info=True)
             return f"发生了内部错误: {e}", 500
             
         return redirect(url_for('status_page', token=stoken))
@@ -270,7 +333,7 @@ def status_page(token):
     tids = r.smembers(f"token:{token}:tasks")
     if not tids:
         tids = session_db.get(token, [])
-    if not tids: return "Expired or Not Found", 404
+    if not tids: return "已过期或未找到", 404
     tasks = []
     for tid in tids:
         data = r.hgetall(f"task:{tid}")
@@ -303,7 +366,7 @@ def tokens_page():
 
 @app.route('/history/<token>')
 def history_page(token):
-    if token != HISTORY_TOKEN: return "Denied", 403
+    if token != HISTORY_TOKEN: return "拒绝访问", 403
     with sqlite3.connect(DB_PATH, timeout=20) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT * FROM tasks ORDER BY time_added DESC LIMIT 500").fetchall()
@@ -458,7 +521,7 @@ def download_selected():
             if db_values:
                 conn.executemany("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", db_values)
     except Exception as e:
-        app.logger.error(f"Error processing selected download: {e}", exc_info=True)
+        app.logger.error(f"批量下载选中项出错: {e}", exc_info=True)
         return f"发生了内部错误: {e}", 500
         
     return redirect(url_for('status_page', token=stoken))
@@ -499,7 +562,7 @@ def oneclick_download():
             if db_values:
                 conn.executemany("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", db_values)
     except Exception as e:
-        app.logger.error(f"Error processing oneclick: {e}", exc_info=True)
+        app.logger.error(f"一键下载出错: {e}", exc_info=True)
         return f"发生了内部错误: {e}", 500
         
     return redirect(url_for('status_page', token=stoken))

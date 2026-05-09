@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import time
 import os
+import sys
 import sqlite3
 
 # --- 配置区 ---
@@ -15,6 +16,8 @@ if os.path.exists(env_path):
                 key, val = line.strip().split('=', 1)
                 os.environ[key.strip()] = val.strip()
 
+IS_WINDOWS = sys.platform == 'win32'
+
 # 从环境变量读取配置 (只读取环境变量，不设默认值以确保隐秘性)
 TOKEN = os.environ.get("TG_TOKEN")
 CHAT_ID = os.environ.get("TG_CHAT_ID")
@@ -22,7 +25,7 @@ CHAT_ID = os.environ.get("TG_CHAT_ID")
 
 BASE_URL = "https://www.hjw01.com"
 CHECK_INTERVAL = 21600  # 将检查时间修改为 6 小时 (6 * 3600 秒)
-DB_PATH = "/app/data/reptile.db"  # 与 app.py 中对应的路径保持一致
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "reptile.db") if IS_WINDOWS else "/app/data/reptile.db"
 
 def setup_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)

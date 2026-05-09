@@ -35,6 +35,20 @@ RUN apt-get update && \
     apt-get install -y /tmp/chrome.deb || apt-get install -fy && \
     rm /tmp/chrome.deb && rm -rf /var/lib/apt/lists/*
 
+# 6.5 预装 ChromeDriver（从 npmmirror 拉取，国内可访问，避免运行时 webdriver_manager 去 Google CDN 下载导致卡死）
+# 提取 Chrome 主版本号，下载对应版本的 chromedriver
+RUN apt-get update && apt-get install -y unzip --no-install-recommends && \
+    CHROME_VER=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+' | head -1) && \
+    CHROME_MAJOR=$(echo $CHROME_VER | cut -d. -f1) && \
+    echo "Chrome version: $CHROME_VER, major: $CHROME_MAJOR" && \
+    curl -sSL -o /tmp/chromedriver.zip \
+      "https://registry.npmmirror.com/-/binary/chromedriver/${CHROME_MAJOR}/chromedriver-linux64.zip" && \
+    unzip -o /tmp/chromedriver.zip -d /usr/local/bin/ && \
+    chmod +x /usr/local/bin/chromedriver && \
+    rm /tmp/chromedriver.zip && \
+    rm -rf /var/lib/apt/lists/* && \
+    echo "ChromeDriver installed: $(chromedriver --version)"
+
 # 7. 将当前电脑/NAS 项目目录下的所有文件（app.py, templates 文件夹等）复制到容器的 /app 目录。
 COPY . .
 

@@ -109,10 +109,27 @@ def is_too_short(file_path):
     except: pass
     return False
 
-def _install_chromedriver():
-    """在独立线程中安装 ChromeDriver，支持超时控制"""
+def _get_chromedriver_path():
+    """获取 ChromeDriver 路径。
+    Docker 环境中 chromedriver 已在构建时预装到 /usr/local/bin/，直接使用；
+    Windows 环境通过 webdriver_manager 下载（国内可加镜像环境变量）。
+    """
+    if not IS_WINDOWS:
+        # Docker / Linux: 使用预装的 chromedriver
+        path = "/usr/local/bin/chromedriver"
+        if os.path.exists(path):
+            logging.info(f"[Selenium] 使用预装 ChromeDriver: {path}")
+            return path
+
+    # Windows / 回退: 使用 webdriver_manager
     from webdriver_manager.chrome import ChromeDriverManager
-    return ChromeDriverManager().install()
+    # 优先使用国内镜像
+    mirror = os.environ.get("CHROMEDRIVER_MIRROR", "")
+    if mirror:
+        os.environ.setdefault("WDM_CDN_URL", mirror)
+    logging.info("[Selenium] webdriver_manager 开始下载 ChromeDriver (超时 120s)...")
+    with eventlet.Timeout(120, TimeoutError("ChromeDriver 下载超时 (120s)，请检查网络或设置 CHROMEDRIVER_MIRROR 环境变量")):
+        return ChromeDriverManager().install()
 
 def get_video_src(page_url):
     from selenium import webdriver
@@ -121,7 +138,6 @@ def get_video_src(page_url):
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
     options = Options()
     options.add_argument("--headless")
@@ -135,20 +151,15 @@ def get_video_src(page_url):
 
     driver = None
     try:
-        # 1) 安装/检查 ChromeDriver（超时 60s）
-        logging.info("[Selenium] 正在安装/检查 ChromeDriver (超时 60s)...")
-        try:
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_install_chromedriver)
-                driver_path = future.result(timeout=60)
-        except FutureTimeout:
-            raise TimeoutError("ChromeDriver 下载超时 (60s)，可能 CDN 不通")
+        # 1) 获取 ChromeDriver（超时 120s）
+        driver_path = _get_chromedriver_path()
         logging.info(f"[Selenium] ChromeDriver 就绪: {driver_path}")
 
         # 2) 启动 Chrome（超时 30s）
         logging.info("[Selenium] 正在启动 Chrome 浏览器 (超时 30s)...")
-        service = Service(driver_path)
-        driver = webdriver.Chrome(service=service, options=options)
+        with eventlet.Timeout(30, TimeoutError("Chrome 启动超时 (30s)")):
+            service = Service(driver_path)
+            driver = webdriver.Chrome(service=service, options=options)
         driver.set_page_load_timeout(30)
         driver.set_script_timeout(30)
         logging.info("[Selenium] Chrome 浏览器已启动")

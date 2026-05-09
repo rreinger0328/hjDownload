@@ -196,6 +196,8 @@ def get_video_src(page_url):
     options.add_argument("--disable-sync")
     options.add_argument("--disable-translate")
     options.add_argument("--disable-default-apps")
+    options.add_argument("--blink-settings=imagesEnabled=false")  # 禁用图片，加快加载
+    options.add_argument("--disable-software-rasterizer")
     if not IS_WINDOWS:
         options.add_argument("--remote-debugging-port=0")
     if IS_WINDOWS:

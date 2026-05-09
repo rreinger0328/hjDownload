@@ -34,6 +34,12 @@ RUN curl -sSL -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrom
 RUN apt-get update && \
     apt-get install -y /tmp/chrome.deb || apt-get install -fy && \
     rm /tmp/chrome.deb && rm -rf /var/lib/apt/lists/*
+# 确保 Chrome 常用依赖完整（slim 镜像可能缺失）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnss3 libnspr4 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
+    libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
+    libcairo2 libasound2 libatspi2.0-0 libx11-xcb1 && \
+    rm -rf /var/lib/apt/lists/*
 
 # 7. 将当前电脑/NAS 项目目录下的所有文件（app.py, templates 文件夹等）复制到容器的 /app 目录。
 COPY . .

@@ -109,6 +109,35 @@ def is_too_short(file_path):
     except: pass
     return False
 
+def _chrome_preflight_check():
+    """启动前直接运行 Chrome 测试是否能正常启动，输出诊断信息"""
+    if IS_WINDOWS:
+        return
+    try:
+        logging.info("[Selenium] 预检: 测试 Chrome 能否启动...")
+        cmd = [
+            "/usr/bin/google-chrome",
+            "--headless=new",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--dump-dom",
+            "about:blank"
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        logging.info(f"[Selenium] 预检: Chrome 退出码 {proc.returncode}")
+        if proc.returncode != 0:
+            logging.error(f"[Selenium] 预检失败 stderr:\n{proc.stderr[-2000:]}")
+        else:
+            logging.info("[Selenium] 预检: Chrome 正常启动")
+    except subprocess.TimeoutExpired:
+        logging.error("[Selenium] 预检: Chrome 测试超时 (30s)")
+    except FileNotFoundError:
+        logging.error("[Selenium] 预检: Chrome 二进制不存在 /usr/bin/google-chrome")
+    except Exception as e:
+        logging.error(f"[Selenium] 预检异常: {type(e).__name__}: {e}")
+
 def _log_chromedriver_output():
     """输出 ChromeDriver 日志，用于诊断启动失败"""
     log_path = "/tmp/chromedriver.log"
@@ -176,11 +205,14 @@ def get_video_src(page_url):
 
     driver = None
     try:
-        # 1) 获取 ChromeDriver（超时 120s）
+        # 1) 获取 ChromeDriver
         driver_path = _get_chromedriver_path()
         logging.info(f"[Selenium] ChromeDriver 就绪: {driver_path}")
 
-        # 2) 启动 Chrome（超时 60s）
+        # 2) 预检：直接测试 Chrome 能否启动
+        _chrome_preflight_check()
+
+        # 3) 启动 Chrome（超时 60s）
         logging.info("[Selenium] 正在启动 Chrome 浏览器 (超时 60s)...")
         service = Service(driver_path, log_output='/tmp/chromedriver.log')
         with eventlet.Timeout(60, TimeoutError("Chrome 启动超时 (60s)")):
@@ -220,9 +252,14 @@ def get_video_src(page_url):
         _log_chromedriver_output()
         return []
     except Exception as e:
-        logging.error(f"[Selenium] 异常: {type(e).__name__}: {e}")
+        msg = str(e)
+        if "TimeoutError" in type(e).__name__ or "TimeoutError" in msg or "超时" in msg:
+            logging.error(f"[Selenium] 超时异常 (经由 {type(e).__name__}): {msg[-300:]}")
+        else:
+            logging.error(f"[Selenium] 异常: {type(e).__name__}: {msg[-500:]}")
         import traceback
         logging.error(f"[Selenium] 堆栈:\n{traceback.format_exc()}")
+        _log_chromedriver_output()
         return []
     finally:
         if driver:

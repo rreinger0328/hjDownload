@@ -710,4 +710,4 @@ if __name__ == '__main__':
     import reptile
     threading.Thread(target=reptile.main, daemon=True).start()
     logging.info("[Reptile] 爬虫后台线程已启动")
-    socketio.run(app, host='0.0.0.0', port=5000)
+    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

@@ -643,7 +643,7 @@ def download_selected():
                 r.sadd(f"token:{stoken}:tasks", tid)
                 
                 r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
-                threading.Thread(target=download_worker, args=(tid, t, u, a), daemon=True).start()
+                threading.Thread(target=download_worker, args=(tid, t, u, a, "m3u8"), daemon=True).start()
                 
             if db_values:
                 conn.executemany("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", db_values)
@@ -684,7 +684,7 @@ def oneclick_download():
                 
                 # 同步到 Redis
                 r.hset(f"task:{tid}", mapping={"author":a, "title":t, "status":"排队中", "progress":"00:00:00", "done":0})
-                threading.Thread(target=download_worker, args=(tid, t, u, a), daemon=True).start()
+                threading.Thread(target=download_worker, args=(tid, t, u, a, "m3u8"), daemon=True).start()
                 
             if db_values:
                 conn.executemany("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)", db_values)

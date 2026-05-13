@@ -28,9 +28,7 @@
                 {% for t in tokens %}
                 <tr>
                     <td>
-                        <a href="/status/{{ t.token }}" target="_blank">
-                            {{ request.host_url }}status/{{ t.token }}
-                        </a>
+                        <a href="/status/{{ t.token }}" target="_blank">{{ t.token }}</a>
                     </td>
                     <td>{{ t.total }}</td>
                     <td style="color: {{ 'green' if t.running == 0 else '#e67e22' }}; font-weight: bold;">

@@ -4,6 +4,7 @@ import time
 import os
 import sys
 import sqlite3
+import logging
 
 # --- 配置区 ---
 
@@ -54,7 +55,7 @@ def save_to_db(title, link, author):
 def send_tg_notification(title, link, author):
     """发送格式化的消息到 Telegram"""
     if not TOKEN or not CHAT_ID:
-        print("未配置 TG_TOKEN 或 TG_CHAT_ID，跳过 TG 推送。")
+        logging.info("未配置 TG_TOKEN 或 TG_CHAT_ID，跳过 TG 推送。")
         return
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     # 构造推送给 TG 的文本
@@ -67,7 +68,7 @@ def send_tg_notification(title, link, author):
     try:
         requests.post(url, data=payload, timeout=10)
     except Exception as e:
-        print(f"TG发送失败: {e}")
+        logging.warning(f"TG发送失败: {e}")
 
 def get_total_pages(soup):
     """获取总页数"""
@@ -90,7 +91,7 @@ def fetch_page(page_num, pushed_urls):
         "Pragma": "no-cache"
     }
     
-    print(f"正在读取: 第 {page_num} 页")
+    logging.info(f"正在读取: 第 {page_num} 页")
     try:
         response = requests.get(url, headers=headers, timeout=15)
         response.encoding = 'utf-8'
@@ -112,7 +113,7 @@ def fetch_page(page_num, pushed_urls):
 
                 # 去重逻辑：以 URL 为准
                 if link not in pushed_urls and not is_url_pushed(link):
-                    print(f"发现新内容: {title}")
+                    logging.info(f"发现新内容: {title}")
                     
                     # 1. 推送到 TG
                     send_tg_notification(title, link, author)
@@ -125,39 +126,92 @@ def fetch_page(page_num, pushed_urls):
         
         return new_count, soup
     except Exception as e:
-        print(f"请求失败: {e}")
+        logging.error(f"请求失败: {e}")
         return 0, None
 
+def page_has_new(page_num):
+    """快速检查某页是否有未入库的新 URL（不保存、不通知）"""
+    url = f"{BASE_URL}/page/{page_num}/" if page_num > 1 else BASE_URL
+    url += f"?t={int(time.time())}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.encoding = 'utf-8'
+        soup = BeautifulSoup(response.text, "html.parser")
+        rows = soup.find_all("div", class_="xqbj-list-rows")
+        for row in rows:
+            a_tag = row.find("a", href=True)
+            if a_tag and a_tag.find("h3"):
+                link = requests.compat.urljoin(BASE_URL, a_tag['href'])
+                if not is_url_pushed(link):
+                    return True, soup
+        return False, soup
+    except Exception as e:
+        logging.error(f"page_has_new({page_num}) 请求失败: {e}")
+        return False, None
+
+def _find_start_page(total_pages):
+    """二分法定位第一条新内容所在的页。
+    新内容集中在低页号，旧内容在高页号。返回起始页号。"""
+    has_new, soup = page_has_new(1)
+    if has_new or soup is None:
+        return 1, soup  # 第一页就有新内容，或请求失败则从第 1 页开始
+
+    # 第一页全是旧内容 → 二分搜索 [2, total_pages]
+    low, high = 2, total_pages
+    first_new_page = total_pages + 1  # 默认无新内容
+    while low <= high:
+        mid = (low + high) // 2
+        has_new, _ = page_has_new(mid)
+        if has_new:
+            first_new_page = mid
+            high = mid - 1  # 继续找更早的页
+        else:
+            low = mid + 1   # 往后找
+        time.sleep(0.5)
+
+    if first_new_page > total_pages:
+        logging.info("二分搜索: 所有页面均无新内容")
+        return total_pages + 1, None
+
+    logging.info(f"二分搜索: 第一条新内容在 第 {first_new_page} 页 (共 {total_pages} 页)")
+    return first_new_page, None
+
 def main():
-    # 初始化创建数据表
     setup_db()
-    
     pushed_urls = set()
-    
+
     while True:
-        print("--- 开始新一轮检查 ---")
-        # 爬取第一页并解析总页数
-        new_on_page, first_soup = fetch_page(1, pushed_urls)
-        
-        if first_soup:
-            total_pages = get_total_pages(first_soup)
-            
-            # 允许容忍最多连续四页没有新内容，以防中间有旧内容插队导致漏爬
-            empty_pages = 0 if new_on_page > 0 else 1
-            for p in range(2, total_pages + 1):
-                new_found, _ = fetch_page(p, pushed_urls)
-                if new_found == 0:
-                    empty_pages += 1
-                    # 如果连续四页都没有新东西，就停止翻页
-                    if empty_pages >= 4:
-                        break
-                else:
-                    empty_pages = 0
-                    
-                time.sleep(1) # 翻页小延迟，避免频率过高
-        
-        print(f"检查完毕。等待 {CHECK_INTERVAL} 秒...")
+        logging.info("--- 开始新一轮检查 ---")
+
+        # 1) 获取总页数
+        has_new, first_soup = page_has_new(1)
+        total_pages = get_total_pages(first_soup) if first_soup else 1
+        logging.info(f"总页数: {total_pages}")
+
+        # 2) 二分法定位新内容起始页
+        start_page, _ = _find_start_page(total_pages)
+
+        # 3) 从起始页开始全量爬取
+        empty_pages = 0
+        for p in range(start_page, total_pages + 1):
+            new_found, _ = fetch_page(p, pushed_urls)
+            if new_found == 0:
+                empty_pages += 1
+                if empty_pages >= 4:  # 连续 4 页无新内容则停止
+                    logging.info(f"连续 {empty_pages} 页无新内容，停止翻页")
+                    break
+            else:
+                empty_pages = 0
+            time.sleep(1)
+
+        logging.info(f"检查完毕。等待 {CHECK_INTERVAL} 秒...")
         time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     main()

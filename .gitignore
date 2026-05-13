@@ -8,6 +8,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Selenium page logs
+llog/
+
 # SQLite databases
 *.sqlite
 *.sqlite3

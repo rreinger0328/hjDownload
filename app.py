@@ -1,9 +1,6 @@
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import eventlet
-eventlet.monkey_patch()
-
 import os, re, time, threading, subprocess, uuid, sqlite3, redis, sys
 from flask import Flask, render_template, request, redirect, url_for, Response
 from flask_socketio import SocketIO
@@ -21,7 +18,7 @@ IS_WINDOWS = sys.platform == 'win32'
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'hjw_redis_secure_key'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # --- 配置 ---
 BASE_SAVE_DIR = os.path.join(os.path.dirname(__file__), "downloads") if IS_WINDOWS else "/downloads"
@@ -115,7 +112,6 @@ def _chrome_preflight_check():
         return
     try:
         logging.info("[Selenium] 预检: 测试 Chrome 能否启动...")
-        # 使用 Linux timeout 命令强制杀进程，eventlet 下 subprocess.run(timeout=) 不可靠
         cmd = [
             "timeout", "30",
             "/usr/bin/google-chrome",
@@ -175,11 +171,10 @@ def _get_chromedriver_path():
     mirror = os.environ.get("CHROMEDRIVER_MIRROR", "")
     if mirror:
         os.environ.setdefault("WDM_CDN_URL", mirror)
-    logging.info("[Selenium] webdriver_manager 开始下载 ChromeDriver (超时 120s)...")
-    with eventlet.Timeout(120, TimeoutError("ChromeDriver 下载超时 (120s)，请检查网络或设置 CHROMEDRIVER_MIRROR 环境变量")):
-        return ChromeDriverManager().install()
+    logging.info("[Selenium] webdriver_manager 开始下载 ChromeDriver...")
+    return ChromeDriverManager().install()
 
-def get_video_src(page_url):
+def get_video_src(page_url, title=""):
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
@@ -206,8 +201,6 @@ def get_video_src(page_url):
     options.add_argument("--disable-async-dns")
     options.add_argument("--dns-prefetch-disable")
     options.add_argument("--disable-features=AsyncDns,OptimizationHints")
-    options.add_argument("--blink-settings=imagesEnabled=false")  # 禁用图片，加快加载
-    options.add_argument("--disable-software-rasterizer")
     if not IS_WINDOWS:
         options.add_argument("--remote-debugging-port=0")
     if IS_WINDOWS:
@@ -225,10 +218,9 @@ def get_video_src(page_url):
         _chrome_preflight_check()
 
         # 3) 启动 Chrome（超时 60s）
-        logging.info("[Selenium] 正在启动 Chrome 浏览器 (超时 60s)...")
+        logging.info("[Selenium] 正在启动 Chrome 浏览器...")
         service = Service(driver_path, log_output='/tmp/chromedriver.log')
-        with eventlet.Timeout(60, TimeoutError("Chrome 启动超时 (60s)")):
-            driver = webdriver.Chrome(service=service, options=options)
+        driver = webdriver.Chrome(service=service, options=options)
         driver.set_page_load_timeout(60)
         driver.set_script_timeout(30)
         logging.info("[Selenium] Chrome 浏览器已启动")
@@ -237,6 +229,14 @@ def get_video_src(page_url):
         logging.info(f"[Selenium] 正在访问页面 (超时 30s): {page_url[:80]}...")
         driver.get(page_url)
         logging.info("[Selenium] 页面加载完成，等待视频元素出现...")
+        # 保存页面 HTML 到 log 目录
+        if title:
+            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log") if IS_WINDOWS else "/app/log"
+            os.makedirs(log_dir, exist_ok=True)
+            safe_filename = re.sub(r'[\\/:*?"<>|]', '_', title)[:100] + ".log"
+            with open(os.path.join(log_dir, safe_filename), 'w', encoding='utf-8') as f:
+                f.write(driver.page_source)
+            logging.info(f"[Selenium] 页面 HTML 已保存到 log/{safe_filename}")
 
         # 4) 等待视频元素（超时 25s），多策略回退
         logging.info("[Selenium] 等待视频元素出现 (超时 25s)...")
@@ -334,7 +334,7 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
         if video_type == "m3u8":
             update_and_broadcast(task_id, status="解析中...")
             logging.info(f"[Worker] 任务 {task_id} 状态已更新为「解析中...」，即将调用 get_video_src()")
-            src_urls = get_video_src(url)
+            src_urls = get_video_src(url, title)
             logging.info(f"[Worker] 任务 {task_id} get_video_src() 返回，结果数量: {len(src_urls) if src_urls else 0}")
             if not src_urls:
                 logging.error(f"[Worker] 任务 {task_id} 获取 m3u8 失败。")
@@ -357,12 +357,14 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
             update_and_broadcast(task_id, status=status_text)
             
             out_path = os.path.join(target_dir, f"{safe_title}{part_suffix}.mp4")
+            # 从页面 URL 提取 Referer（防盗链需要匹配来源域名）
+            ref = url if video_type == "m3u8" else "https://www.hjw01.com/"
             headers = (
                 "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\r\n"
                 "Accept-Language: zh-CN,zh;q=0.9\r\n"
                 "Cache-Control: max-age=0\r\n"
                 "Priority: u=0, i\r\n"
-                "Referer: https://nyvhkxuk.cc/\r\n"
+                f"Referer: {ref}\r\n"
                 "Sec-CH-UA: \"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"\r\n"
                 "Sec-CH-UA-Mobile: ?0\r\n"
                 "Sec-CH-UA-Platform: \"Windows\"\r\n"

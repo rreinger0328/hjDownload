@@ -46,12 +46,11 @@ COPY . .
 
 # 8. 安装 Python 项目依赖库：
 # -i https://pypi.tuna.tsinghua.edu.cn/simple: 使用清华大学镜像源，大幅提升国内下载速度。
-# flask, flask-socketio: 网页框架及 WebSocket 实时通信支持。
-# eventlet: 高性能异步并发库，是 WebSocket 正常运行的底层支柱。
+# flask, flask-socketio: 网页框架及 WebSocket 实时通信（threading 模式）。
 # selenium, webdriver-manager: 用于模拟浏览器操作，动态抓取视频的 m3u8 地址。
 # redis: 引入 Redis 驱动，用于在高并发下载时作为进度缓存，解决 SQLite 锁死问题。
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    flask flask-socketio eventlet selenium webdriver-manager redis \
+    flask flask-socketio selenium webdriver-manager redis \
     requests beautifulsoup4
 
 # 8.5 预装 ChromeDriver（构建时用 webdriver_manager 下载并缓存到 /usr/local/bin/）

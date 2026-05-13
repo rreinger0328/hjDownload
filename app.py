@@ -188,8 +188,7 @@ def get_video_src(page_url, title=""):
     options.add_argument("--dns-prefetch-disable")
     options.add_argument("--disable-features=AsyncDns,OptimizationHints")
     options.add_argument(f"--user-data-dir=/tmp/chrome-data-{uuid.uuid4().hex[:8]}")
-    if not IS_WINDOWS:
-        options.add_argument("--remote-debugging-port=0")
+    # ChromeDriver 148+ 默认使用管道通信，不再需要 --remote-debugging-port
     if IS_WINDOWS:
         options.binary_location = r"C:\Users\Administrator\AppData\Local\Google\Chrome\Bin\chrome.exe"
     else:
@@ -201,10 +200,10 @@ def get_video_src(page_url, title=""):
         driver_path = _get_chromedriver_path()
         logging.info(f"[Selenium] ChromeDriver 就绪: {driver_path}")
 
-        # 2) 启动 Chrome
+        # 2) 启动 Chrome (Selenium 4.x 自动从 PATH 发现 ChromeDriver)
         logging.info("[Selenium] 正在启动 Chrome 浏览器...")
         chromedriver_log = os.path.join(LOG_DIR, "chromedriver.log") if IS_WINDOWS else "/tmp/chromedriver.log"
-        service = Service(driver_path, log_output=chromedriver_log)
+        service = Service(executable_path=driver_path, log_output=chromedriver_log, log_level='ALL')
         driver = webdriver.Chrome(service=service, options=options)
         driver.set_page_load_timeout(60)
         driver.set_script_timeout(30)

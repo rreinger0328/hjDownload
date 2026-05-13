@@ -10,6 +10,10 @@ venv.bak/
 
 # Selenium page logs
 llog/
+log/
+
+# Runtime data
+data/
 
 # SQLite databases
 *.sqlite

@@ -69,15 +69,22 @@ def update_and_broadcast(task_id, status=None, progress=None, done=None):
     """
     payload = {"task_id": task_id}
     
-    # 1. 更新 Redis 缓存
-    if status: 
-        r.hset(f"task:{task_id}", "status", status)
+    # 1. 更新 Redis 缓存（网络故障时不影响 WebSocket 广播）
+    try:
+        if status:
+            r.hset(f"task:{task_id}", "status", status)
+        if progress:
+            r.hset(f"task:{task_id}", "progress", progress)
+        if done is not None:
+            r.hset(f"task:{task_id}", "done", 1 if done else 0)
+    except Exception:
+        pass
+
+    if status:
         payload["status"] = status
-    if progress: 
-        r.hset(f"task:{task_id}", "progress", progress)
+    if progress:
         payload["progress"] = progress
-    if done is not None: 
-        r.hset(f"task:{task_id}", "done", 1 if done else 0)
+    if done is not None:
         payload["done"] = 1 if done else 0
 
     # 2. 实时广播
@@ -109,55 +116,19 @@ def update_and_broadcast(task_id, status=None, progress=None, done=None):
 def is_too_short(file_path):
     try:
         cmd = [FFPROBE_PATH, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=30)
         if res.stdout.strip() and float(res.stdout.strip()) < MIN_DURATION:
             return True
-    except: pass
+    except subprocess.TimeoutExpired:
+        logging.warning(f"[ffprobe] 超时 30s: {file_path}")
+    except:
+        pass
     return False
 
-_chrome_preflight_lock = threading.Lock()
-
-def _chrome_preflight_check():
-    """启动前直接运行 Chrome 测试是否能正常启动，输出诊断信息。
-    加锁序列化，避免多个 worker 同时初始化 Chrome 导致资源争抢死锁。"""
-    if IS_WINDOWS:
-        return
-    with _chrome_preflight_lock:
-        try:
-            logging.info("[Selenium] 预检: 测试 Chrome 能否启动...")
-            cmd = [
-                "timeout", "30",
-                "/usr/bin/google-chrome",
-                "--headless=new",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-async-dns",
-                "--dns-prefetch-disable",
-                "--disable-component-update",
-                "--disable-features=AsyncDns,OptimizationHints",
-                "--dump-dom",
-                "about:blank"
-            ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
-            logging.info(f"[Selenium] 预检: Chrome 退出码 {proc.returncode}")
-            if proc.returncode == 124:
-                logging.error("[Selenium] 预检: Chrome 测试超时 (被 timeout 命令杀死)")
-            elif proc.returncode != 0:
-                logging.error(f"[Selenium] 预检失败 stderr:\n{proc.stderr[-2000:]}")
-            else:
-                logging.info("[Selenium] 预检: Chrome 正常启动")
-        except subprocess.TimeoutExpired:
-            logging.error("[Selenium] 预检: Chrome 测试超时 (Python 层面 35s 强制杀死)")
-        except FileNotFoundError:
-            logging.error("[Selenium] 预检: Chrome 二进制不存在 /usr/bin/google-chrome")
-        except Exception as e:
-            logging.error(f"[Selenium] 预检异常: {type(e).__name__}: {e}")
 
 def _log_chromedriver_output():
     """输出 ChromeDriver 日志，用于诊断启动失败"""
-    log_path = "/tmp/chromedriver.log"
+    log_path = os.path.join(LOG_DIR, "chromedriver.log") if IS_WINDOWS else "/tmp/chromedriver.log"
     if os.path.exists(log_path):
         try:
             with open(log_path, "r") as f:
@@ -216,6 +187,7 @@ def get_video_src(page_url, title=""):
     options.add_argument("--disable-async-dns")
     options.add_argument("--dns-prefetch-disable")
     options.add_argument("--disable-features=AsyncDns,OptimizationHints")
+    options.add_argument(f"--user-data-dir=/tmp/chrome-data-{uuid.uuid4().hex[:8]}")
     if not IS_WINDOWS:
         options.add_argument("--remote-debugging-port=0")
     if IS_WINDOWS:
@@ -229,18 +201,16 @@ def get_video_src(page_url, title=""):
         driver_path = _get_chromedriver_path()
         logging.info(f"[Selenium] ChromeDriver 就绪: {driver_path}")
 
-        # 2) 预检：直接测试 Chrome 能否启动
-        _chrome_preflight_check()
-
-        # 3) 启动 Chrome（超时 60s）
+        # 2) 启动 Chrome
         logging.info("[Selenium] 正在启动 Chrome 浏览器...")
-        service = Service(driver_path, log_output='/tmp/chromedriver.log')
+        chromedriver_log = os.path.join(LOG_DIR, "chromedriver.log") if IS_WINDOWS else "/tmp/chromedriver.log"
+        service = Service(driver_path, log_output=chromedriver_log)
         driver = webdriver.Chrome(service=service, options=options)
         driver.set_page_load_timeout(60)
         driver.set_script_timeout(30)
         logging.info("[Selenium] Chrome 浏览器已启动")
 
-        # 3) 访问页面（超时 30s，由 set_page_load_timeout 控制）
+        # 3) 访问页面
         logging.info(f"[Selenium] 正在访问页面 (超时 30s): {page_url[:80]}...")
         driver.get(page_url)
         logging.info("[Selenium] 页面加载完成，等待视频元素出现...")
@@ -253,7 +223,7 @@ def get_video_src(page_url, title=""):
                 f.write(driver.page_source)
             logging.info(f"[Selenium] 页面 HTML 已保存到 log/{safe_filename}")
 
-        # 4) 等待视频元素（超时 25s），多策略回退
+        # 4) 等待视频元素，多策略回退
         logging.info("[Selenium] 等待视频元素出现 (超时 25s)...")
         srcs = []
         selectors = [
@@ -402,9 +372,14 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
                             update_and_broadcast(task_id, progress=match.group(1))
                             last_broadcast_time = time.time()
             
-            proc.wait()
+            try:
+                proc.wait(timeout=1200)  # 最长等待 20 分钟
+            except subprocess.TimeoutExpired:
+                logging.error(f"[Worker] 任务 {task_id} 第 {idx+1} 部分 FFmpeg 超时 (20min)，强制终止")
+                proc.kill()
+                proc.wait()
             logging.info(f"[Worker] 任务 {task_id} 第 {idx+1} 部分 FFmpeg 退出码: {proc.returncode}")
-            
+
             if proc.returncode == 0 and os.path.exists(out_path):
                 if is_too_short(out_path):
                     logging.warning(f"[Worker] 任务 {task_id} 第 {idx+1} 部分视频时长不足，已跳过。")

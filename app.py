@@ -30,7 +30,16 @@ MIN_DURATION = 300 # 5分钟
 HISTORY_TOKEN = "manager_999"
 
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log") if IS_WINDOWS else "/app/log"
+os.makedirs(LOG_DIR, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(os.path.join(LOG_DIR, "app.log"), encoding='utf-8'),
+    ]
+)
 
 # Redis 连接 (通过 Compose 里的服务名连接)，增加超时时间防止应用卡死
 r = redis.Redis(host=os.environ.get('REDIS_HOST', 'redis_db'), port=6379, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
@@ -106,39 +115,45 @@ def is_too_short(file_path):
     except: pass
     return False
 
+_chrome_preflight_lock = threading.Lock()
+
 def _chrome_preflight_check():
-    """启动前直接运行 Chrome 测试是否能正常启动，输出诊断信息"""
+    """启动前直接运行 Chrome 测试是否能正常启动，输出诊断信息。
+    加锁序列化，避免多个 worker 同时初始化 Chrome 导致资源争抢死锁。"""
     if IS_WINDOWS:
         return
-    try:
-        logging.info("[Selenium] 预检: 测试 Chrome 能否启动...")
-        cmd = [
-            "timeout", "30",
-            "/usr/bin/google-chrome",
-            "--headless=new",
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-async-dns",
-            "--dns-prefetch-disable",
-            "--disable-component-update",
-            "--disable-features=AsyncDns,OptimizationHints",
-            "--dump-dom",
-            "about:blank"
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        logging.info(f"[Selenium] 预检: Chrome 退出码 {proc.returncode}")
-        if proc.returncode == 124:
-            logging.error("[Selenium] 预检: Chrome 测试超时 (被 timeout 命令杀死)")
-        elif proc.returncode != 0:
-            logging.error(f"[Selenium] 预检失败 stderr:\n{proc.stderr[-2000:]}")
-        else:
-            logging.info("[Selenium] 预检: Chrome 正常启动")
-    except FileNotFoundError:
-        logging.error("[Selenium] 预检: Chrome 二进制不存在 /usr/bin/google-chrome")
-    except Exception as e:
-        logging.error(f"[Selenium] 预检异常: {type(e).__name__}: {e}")
+    with _chrome_preflight_lock:
+        try:
+            logging.info("[Selenium] 预检: 测试 Chrome 能否启动...")
+            cmd = [
+                "timeout", "30",
+                "/usr/bin/google-chrome",
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-async-dns",
+                "--dns-prefetch-disable",
+                "--disable-component-update",
+                "--disable-features=AsyncDns,OptimizationHints",
+                "--dump-dom",
+                "about:blank"
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
+            logging.info(f"[Selenium] 预检: Chrome 退出码 {proc.returncode}")
+            if proc.returncode == 124:
+                logging.error("[Selenium] 预检: Chrome 测试超时 (被 timeout 命令杀死)")
+            elif proc.returncode != 0:
+                logging.error(f"[Selenium] 预检失败 stderr:\n{proc.stderr[-2000:]}")
+            else:
+                logging.info("[Selenium] 预检: Chrome 正常启动")
+        except subprocess.TimeoutExpired:
+            logging.error("[Selenium] 预检: Chrome 测试超时 (Python 层面 35s 强制杀死)")
+        except FileNotFoundError:
+            logging.error("[Selenium] 预检: Chrome 二进制不存在 /usr/bin/google-chrome")
+        except Exception as e:
+            logging.error(f"[Selenium] 预检异常: {type(e).__name__}: {e}")
 
 def _log_chromedriver_output():
     """输出 ChromeDriver 日志，用于诊断启动失败"""

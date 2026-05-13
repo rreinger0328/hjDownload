@@ -2,12 +2,14 @@ services:
   app:
     image: ghcr.io/rreinger0328/hjdownload:main
     container_name: hjw_downloader
+    shm_size: '2gb'  # Chrome 无头浏览器需要较大共享内存
     ports:
       - "5000:5000"
     volumes:
       # 映射到你指定的 NAS 视频存储路径
       - /vol1/1000/video/AVI:/downloads
       - ./data:/app/data
+      - ./log:/app/log        # 应用日志持久化到宿主机
     env_file:
       - .env
     environment:
@@ -15,8 +17,17 @@ services:
     depends_on:
       - redis_db
     restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 3072M
 
   redis_db:
     image: redis:7-alpine
     container_name: hjw_redis
     restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    command: redis-server --maxmemory 800mb --maxmemory-policy allkeys-lru

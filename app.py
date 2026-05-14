@@ -249,32 +249,87 @@ def get_video_src(page_url, title=""):
             cls = el.get_attribute("class") or ""
             logging.info(f"[Selenium]   video[{i}] id={cid} class={cls} src[:80]={src[:80]}")
 
-        # 6) 循环扫描提取 m3u8
-        for i in range(15):
-            # 尝试所有可能的选择器
-            for sel in selectors + ["video", "video[src]"]:
+        # 6) 多策略提取 m3u8 URL
+        # 策略A: Performance API — DPlayer通过XHR加载m3u8，URL会记录在浏览器资源时间线中
+        try:
+            m3u8_urls = driver.execute_script("""
+                var urls = [];
+                try {
+                    var entries = performance.getEntriesByType('resource');
+                    for (var i = 0; i < entries.length; i++) {
+                        if (entries[i].name.indexOf('.m3u8') !== -1) {
+                            urls.push(entries[i].name);
+                        }
+                    }
+                } catch(e) {}
+                return urls;
+            """)
+            for u in (m3u8_urls or []):
+                if u not in srcs:
+                    srcs.append(u)
+                    logging.info(f"[Selenium] Performance API 提取到 m3u8: {u[:80]}...")
+        except:
+            pass
+
+        # 策略B: 尝试从 DPlayer / HLS.js 实例中提取
+        try:
+            dp_url = driver.execute_script("""
+                try {
+                    var video = document.querySelector('video');
+                    if (video) {
+                        // HLS.js 实例存储
+                        if (video._hls && video._hls.url) return video._hls.url;
+                        // 遍历 player 容器上的属性
+                        var dp = document.querySelector('.dplayer');
+                        if (dp) {
+                            for (var key in dp) {
+                                try {
+                                    var obj = dp[key];
+                                    if (obj && obj.options && obj.options.video && obj.options.video.url) {
+                                        return obj.options.video.url;
+                                    }
+                                } catch(e) {}
+                            }
+                        }
+                    }
+                } catch(e) {}
+                return '';
+            """)
+            if dp_url and 'm3u8' in dp_url and dp_url not in srcs:
+                srcs.append(dp_url)
+                logging.info(f"[Selenium] DPlayer实例提取到 m3u8: {dp_url[:80]}...")
+        except:
+            pass
+
+        # 策略C: 扫描 DOM 中所有可能包含 m3u8 的属性
+        for i in range(8):
+            for sel in selectors + ["video", "video[src]", "video source"]:
                 els = driver.find_elements(By.CSS_SELECTOR, sel)
                 for el in els:
                     src = el.get_attribute("src")
                     if src and "m3u8" in src and src not in srcs:
                         srcs.append(src)
             if srcs:
-                logging.info(f"[Selenium] 成功提取 {len(srcs)} 个 m3u8 链接")
+                logging.info(f"[Selenium] DOM 扫描提取到 {len(srcs)} 个 m3u8 链接")
                 return srcs
-            if len(srcs) == 0 and i == 0:
-                # 第一次没找到就执行 JS 兜底
-                try:
-                    js_src = driver.execute_script(
-                        "var v=document.querySelector('video[src*=\".m3u8\"]'); return v?v.src:'';"
-                    )
-                    if js_src and "m3u8" in js_src and js_src not in srcs:
-                        srcs.append(js_src)
-                        logging.info(f"[Selenium] JS 兜底提取到 m3u8: {js_src[:80]}...")
-                        return srcs
-                except:
-                    pass
-            time.sleep(1)
-        logging.warning(f"[Selenium] {i+1} 次扫描均未获取到 m3u8 链接")
+            # JS 兜底
+            try:
+                js_src = driver.execute_script(
+                    "var v=document.querySelector('video[src*=\".m3u8\"]'); return v?v.src:'';"
+                )
+                if js_src and "m3u8" in js_src and js_src not in srcs:
+                    srcs.append(js_src)
+                    logging.info(f"[Selenium] JS 提取到 m3u8: {js_src[:80]}...")
+                    return srcs
+            except:
+                pass
+            time.sleep(0.5)
+
+        if srcs:
+            logging.info(f"[Selenium] 多策略共提取 {len(srcs)} 个 m3u8 链接")
+            return srcs
+        else:
+            logging.warning(f"[Selenium] 所有策略均未获取到 m3u8 链接")
 
     except TimeoutError:
         logging.error("[Selenium] 超时异常，终止当前解析任务")

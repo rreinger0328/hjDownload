@@ -187,8 +187,13 @@ def get_video_src(page_url, title=""):
     options.add_argument("--disable-async-dns")
     options.add_argument("--dns-prefetch-disable")
     options.add_argument("--disable-features=AsyncDns,OptimizationHints")
-    options.add_argument(f"--user-data-dir=/tmp/chrome-data-{uuid.uuid4().hex[:8]}")
-    # ChromeDriver 148+ 默认使用管道通信，不再需要 --remote-debugging-port
+    if IS_WINDOWS:
+        import tempfile
+        options.add_argument(f"--user-data-dir={os.path.join(tempfile.gettempdir(), 'chrome-data-' + uuid.uuid4().hex[:8])}")
+        options.add_argument("--remote-debugging-port=0")
+    else:
+        options.add_argument(f"--user-data-dir=/tmp/chrome-data-{uuid.uuid4().hex[:8]}")
+        # ChromeDriver 148+ 默认使用管道通信
     if IS_WINDOWS:
         options.binary_location = r"C:\Users\Administrator\AppData\Local\Google\Chrome\Bin\chrome.exe"
     else:

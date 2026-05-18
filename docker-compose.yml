@@ -14,6 +14,11 @@ services:
       - .env
     environment:
       - REDIS_HOST=redis_db
+      # 可选配置（默认值在 app.py 中）：
+      # - MAX_THREADS=2        # 并发下载线程数
+      # - FFMPEG_THREADS=1     # FFmpeg 解码线程数
+      # - TG_TOKEN=...         # Telegram Bot Token
+      # - TG_CHAT_ID=...       # Telegram Chat ID
     depends_on:
       - redis_db
     restart: always

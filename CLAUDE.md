@@ -19,6 +19,8 @@ python app.py          # starts Flask + SocketIO on :5000, also launches reptile
 TG_TOKEN=123:abc
 TG_CHAT_ID=-456
 REDIS_HOST=redis_db        # defaults to "redis_db"
+MAX_THREADS=2              # 并发下载线程数，默认 2（低内存），升级后可选 3-6
+FFMPEG_THREADS=1           # FFmpeg 解码线程数，默认 1
 CHROMEDRIVER_MIRROR=https://npmmirror.com/mirrors/chromedriver  # optional, for China
 ```
 
@@ -78,6 +80,8 @@ The Dockerfile installs Chrome from Google's official `.deb`, FFmpeg, and Python
 ### Config constants (app.py)
 
 - `MIN_DURATION = 300` — videos shorter than 5 minutes are discarded after download
-- `MAX_THREADS = 3` — concurrent downloads per type (m3u8/mp4)
+- `MAX_THREADS` — concurrent downloads per type (m3u8/mp4), default 2, configurable via .env
+- `FFMPEG_THREADS` — FFmpeg decode threads, default 1, configurable via .env
+- `MIN_DURATION = 300` — videos shorter than 5 minutes are discarded
 - `HISTORY_TOKEN = "manager_999"` — access token for `/history/`
 - `REDIS_HOST` — set via env var, defaults to `redis_db` (Compose service name)

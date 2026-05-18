@@ -25,9 +25,10 @@ BASE_SAVE_DIR = os.path.join(os.path.dirname(__file__), "downloads") if IS_WINDO
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "tasks.db") if IS_WINDOWS else "/app/data/tasks.db"
 FFMPEG_PATH = "ffmpeg"
 FFPROBE_PATH = "ffprobe"
-MAX_THREADS = 2  # 低内存环境限制并发数，避免 OOM
+MAX_THREADS = int(os.environ.get("MAX_THREADS", "2"))  # 并发下载数，低内存用2，大内存可调高
 MIN_DURATION = 300 # 5分钟
 HISTORY_TOKEN = "manager_999"
+FFMPEG_THREADS = os.environ.get("FFMPEG_THREADS", "1")  # FFmpeg 解码线程数
 
 import logging
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log") if IS_WINDOWS else "/app/log"
@@ -441,7 +442,7 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
                 "Upgrade-Insecure-Requests: 1\r\n"
                 "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
             )
-            cmd = [FFMPEG_PATH, '-threads', '1', '-headers', headers, '-i', src_url, '-c', 'copy', '-y', out_path]
+            cmd = [FFMPEG_PATH, '-threads', FFMPEG_THREADS, '-headers', headers, '-i', src_url, '-c', 'copy', '-y', out_path]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
             
             last_broadcast_time = 0

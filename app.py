@@ -25,7 +25,7 @@ BASE_SAVE_DIR = os.path.join(os.path.dirname(__file__), "downloads") if IS_WINDO
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "tasks.db") if IS_WINDOWS else "/app/data/tasks.db"
 FFMPEG_PATH = "ffmpeg"
 FFPROBE_PATH = "ffprobe"
-MAX_THREADS = 3
+MAX_THREADS = 2  # 低内存环境限制并发数，避免 OOM
 MIN_DURATION = 300 # 5分钟
 HISTORY_TOKEN = "manager_999"
 
@@ -187,6 +187,9 @@ def get_video_src(page_url, title=""):
     options.add_argument("--disable-async-dns")
     options.add_argument("--dns-prefetch-disable")
     options.add_argument("--disable-features=AsyncDns,OptimizationHints")
+    # 低内存环境：限制 Chrome 进程数以减少内存占用
+    options.add_argument("--renderer-process-limit=1")
+    options.add_argument("--max_old_space_size=256")
     if IS_WINDOWS:
         import tempfile
         options.add_argument(f"--user-data-dir={os.path.join(tempfile.gettempdir(), 'chrome-data-' + uuid.uuid4().hex[:8])}")
@@ -357,8 +360,27 @@ def get_video_src(page_url, title=""):
                 driver.quit()
             except:
                 pass
+            # 强制清理残留的 Chrome 进程，防止在低内存机器上积累僵尸
+            _cleanup_chrome_processes()
             logging.info("[Selenium] Chrome 已关闭")
     return []
+
+def _cleanup_chrome_processes():
+    """强杀残留的 Chrome/Chromedriver 子进程，防止内存泄漏"""
+    try:
+        import subprocess as sp
+        if IS_WINDOWS:
+            sp.run(['taskkill', '/F', '/IM', 'chrome.exe'], capture_output=True, timeout=5)
+            sp.run(['taskkill', '/F', '/IM', 'chromedriver.exe'], capture_output=True, timeout=5)
+        else:
+            # 优先用 pkill，回退到 shell
+            try:
+                sp.run(['pkill', '-9', '-f', 'chrome'], capture_output=True, timeout=5)
+            except FileNotFoundError:
+                sp.run("kill -9 $(ps aux | grep -E 'chrome|chromedriver' | grep -v grep | awk '{print $2}') 2>/dev/null || true",
+                       shell=True, capture_output=True, timeout=5)
+    except:
+        pass
 
 m3u8_semaphore = threading.Semaphore(MAX_THREADS)
 mp4_semaphore = threading.Semaphore(MAX_THREADS)
@@ -419,7 +441,7 @@ def download_worker(task_id, title, url, author, video_type="m3u8"):
                 "Upgrade-Insecure-Requests: 1\r\n"
                 "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
             )
-            cmd = [FFMPEG_PATH, '-headers', headers, '-i', src_url, '-c', 'copy', '-y', out_path]
+            cmd = [FFMPEG_PATH, '-threads', '1', '-headers', headers, '-i', src_url, '-c', 'copy', '-y', out_path]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
             
             last_broadcast_time = 0

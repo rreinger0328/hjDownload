@@ -15,6 +15,9 @@ log/
 # Runtime data
 data/
 
+# Deployment script (contains credentials)
+deploy_nas.py
+
 # SQLite databases
 *.sqlite
 *.sqlite3

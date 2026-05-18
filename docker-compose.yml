@@ -2,7 +2,7 @@ services:
   app:
     image: ghcr.io/rreinger0328/hjdownload:main
     container_name: hjw_downloader
-    shm_size: '2gb'  # Chrome 无头浏览器需要较大共享内存
+    shm_size: '256m'  # 低内存环境；--disable-dev-shm-usage 已设为 /tmp，无需大 shm
     ports:
       - "5000:5000"
     volumes:
@@ -20,7 +20,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3072M
+          memory: 2048M
 
   redis_db:
     image: redis:7-alpine
@@ -29,5 +29,5 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1024M
-    command: redis-server --maxmemory 800mb --maxmemory-policy allkeys-lru
+          memory: 512M
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru

@@ -50,8 +50,8 @@ COPY . .
 # selenium, webdriver-manager: 用于模拟浏览器操作，动态抓取视频的 m3u8 地址。
 # redis: 引入 Redis 驱动，用于在高并发下载时作为进度缓存，解决 SQLite 锁死问题。
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    flask==3.1.2 flask-socketio==5.6.1 selenium==4.44.0 webdriver-manager==4.0.2 redis==5.2.1 \
-    requests==2.32.3 beautifulsoup4==4.12.3
+    flask flask-socketio selenium webdriver-manager redis \
+    requests beautifulsoup4
 
 # 8.5 预装 ChromeDriver（构建时用 webdriver_manager 下载并缓存到 /usr/local/bin/）
 # GitHub Actions runner 在海外，能正常访问 Google CDN；NAS 拉取镜像后直接使用，免去运行时下载
